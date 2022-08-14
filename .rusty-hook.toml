@@ -1,5 +1,5 @@
 [hooks]
-pre-commit = "cargo fmt && cargo check --all-targets && cargo test"
+pre-commit = "cargo test"
 
 [logging]
 verbose = true

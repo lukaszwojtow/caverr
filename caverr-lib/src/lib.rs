@@ -1,3 +1,3 @@
-pub fn show() {
+pub async fn show() {
     println!("ok");
 }

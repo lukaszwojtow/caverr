@@ -2,10 +2,11 @@
 name = "caverr-lib"
 version = "0.1.0"
 edition = "2021"
-
+authors = ["Łukasz Wojtów <lukasz.wojtow@gmail.com>"]
+license = "MIT OR Apache-2.0"
 
 [dependencies]
-
+aes = "0.8"
 
 [dev-dependencies]
 rusty-hook = "0.11"
