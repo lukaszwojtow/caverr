@@ -1,0 +1,11 @@
+[package]
+name = "caverr-lib"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+
+
+[dev-dependencies]
+rusty-hook = "0.11"
