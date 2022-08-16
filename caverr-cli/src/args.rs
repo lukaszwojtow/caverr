@@ -7,22 +7,22 @@ use std::str::FromStr;
 pub(super) struct Args {
     /// Main command
     #[clap(short, long, value_parser)]
-    command: Command,
+    pub(super) command: Command,
 
-    /// Password file
+    /// Key / password / setup  file
     #[clap(short, long, value_parser)]
-    password: PathBuf,
+    pub(super) key: PathBuf,
 
     /// Source file / directory
     #[clap(short, long, value_parser)]
-    source: PathBuf,
+    pub(super) source: PathBuf,
 }
 
 #[derive(Clone, Debug)]
-enum Command {
-    Encrypt,
-    Decrypt,
+pub(super) enum Command {
     Backup,
+    Decrypt,
+    Encrypt,
     Verify,
 }
 

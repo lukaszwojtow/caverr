@@ -14,7 +14,7 @@
     variant_size_differences
 )]
 
-use crate::args::Args;
+use crate::args::{Args, Command};
 use clap::Parser;
 
 mod args;
@@ -22,4 +22,10 @@ mod args;
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    match args.command {
+        Command::Backup => todo!(),
+        Command::Decrypt => todo!(),
+        Command::Encrypt => todo!(),
+        Command::Verify => todo!(),
+    }
 }
