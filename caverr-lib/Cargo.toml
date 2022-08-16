@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 aes = "0.8"
 async-trait = "0.1.57"
+thiserror = "1.0"
 tokio = {version = "1.20", features = ["full"]}
 
 [dev-dependencies]
