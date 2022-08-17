@@ -5,7 +5,7 @@ use tokio::fs::File;
 
 pub async fn file_transform<E: Debug>(
     source: &Path,
-    transformer: &mut dyn Transformer<Error = E>,
+    transformer: impl Transformer<Error = E>,
     target: &Path,
     // TODO refactor to own Result
 ) -> Result<(), TransformError<E>> {

@@ -8,7 +8,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 /// Reads target in chunks, transforms it using [Transformer::update], and writes to target.
 pub async fn transform<E: Debug, R: AsyncRead + Send + 'static, W: AsyncWrite + Unpin>(
     source: R,
-    transformer: &mut dyn Transformer<Error = E>,
+    transformer: impl Transformer<Error = E>,
     target: &mut W,
 ) -> Result<(), TransformError<E>> {
     // TODO return number of bytes written when success
@@ -24,7 +24,7 @@ pub enum TransformError<E> {
 }
 
 async fn transform_and_write<E: Debug, W: AsyncWrite + Unpin>(
-    transformer: &mut dyn Transformer<Error = E>,
+    mut transformer: impl Transformer<Error = E>,
     target: &mut W,
     mut receiver: Receiver<io::Result<Vec<u8>>>,
 ) -> Result<(), TransformError<E>> {
@@ -107,7 +107,7 @@ pub trait Transformer {
 
     /// Called when finished reading the source file.
     /// Can return bytes to be added to the target file.
-    async fn finish(&mut self) -> Result<Vec<u8>, Self::Error>; // TODO change to consume self
+    async fn finish(self) -> Result<Vec<u8>, Self::Error>;
 }
 
 #[cfg(test)]
@@ -116,7 +116,6 @@ mod test {
     use std::io::Cursor;
     struct XorCipher {
         seed: u8,
-        finished: usize,
     }
 
     #[async_trait]
@@ -133,10 +132,7 @@ mod test {
                     bytes.len()
                 ))
             } else {
-                Ok(Self {
-                    seed: bytes[0],
-                    finished: 0,
-                })
+                Ok(Self { seed: bytes[0] })
             }
         }
 
@@ -145,8 +141,7 @@ mod test {
             Ok(bytes)
         }
 
-        async fn finish(&mut self) -> Result<Vec<u8>, Self::Error> {
-            self.finished += 1;
+        async fn finish(mut self) -> Result<Vec<u8>, Self::Error> {
             Ok(Default::default())
         }
     }
@@ -154,17 +149,15 @@ mod test {
     #[tokio::test]
     async fn should_transform() {
         const LEN: usize = 5000;
-        let mut xor = XorCipher::new(vec![0b_0101_0101_u8]).await.unwrap();
+        let xor = XorCipher::new(vec![0b_0101_0101_u8]).await.unwrap();
         let buffer = Cursor::new(vec![0b_0000_1111_u8; LEN]);
         let mut target = vec![];
-        transform(buffer, &mut xor, &mut target).await.unwrap();
+        transform(buffer, xor, &mut target).await.unwrap();
         // assert length
         assert_eq!(target.len(), LEN);
         for byte in target {
             // assert each byte
             assert_eq!(byte, 0b_0101_1010_u8)
         }
-        // assert how many times finish() was called
-        assert_eq!(xor.finished, 1);
     }
 }
