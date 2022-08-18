@@ -7,9 +7,7 @@ pub async fn file_transform<E: Debug>(
     source: &Path,
     transformer: impl Transformer<Error = E>,
     target: &Path,
-    // TODO refactor to own Result
-) -> Result<(), TransformError<E>> {
-    // TODO return number of bytes written when success
+) -> Result<usize, TransformError<E>> {
     let source = File::open(source)
         .await
         .map_err(|e| TransformError::IOError(e))?;

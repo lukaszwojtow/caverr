@@ -6,12 +6,12 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// Reads target in chunks, transforms it using [Transformer::update], and writes to target.
+/// Returns total bytes written or error.
 pub async fn transform<E: Debug, R: AsyncRead + Send + 'static, W: AsyncWrite + Unpin>(
     source: R,
     transformer: impl Transformer<Error = E>,
     target: &mut W,
-) -> Result<(), TransformError<E>> {
-    // TODO return number of bytes written when success
+) -> Result<usize, TransformError<E>> {
     let (sender, receiver) = channel::<io::Result<Vec<u8>>>(16);
     spawn_reading(source, sender);
     transform_and_write(transformer, target, receiver).await
@@ -27,7 +27,8 @@ async fn transform_and_write<E: Debug, W: AsyncWrite + Unpin>(
     mut transformer: impl Transformer<Error = E>,
     target: &mut W,
     mut receiver: Receiver<io::Result<Vec<u8>>>,
-) -> Result<(), TransformError<E>> {
+) -> Result<usize, TransformError<E>> {
+    let mut written = 0;
     while let Some(message) = receiver.recv().await {
         match message {
             Ok(bytes) => {
@@ -36,6 +37,7 @@ async fn transform_and_write<E: Debug, W: AsyncWrite + Unpin>(
                     .await
                     .map_err(|e| TransformError::Transform(e))?;
                 if !res.is_empty() {
+                    written += res.len();
                     target
                         .write_all(&res)
                         .await
@@ -50,12 +52,13 @@ async fn transform_and_write<E: Debug, W: AsyncWrite + Unpin>(
         .await
         .map_err(|e| TransformError::Transform(e))?;
     if !res.is_empty() {
+        written += res.len();
         target
             .write_all(&res)
             .await
             .map_err(|e| TransformError::IOError(e))?;
     }
-    Ok(())
+    Ok(written)
 }
 
 fn spawn_reading<R: AsyncRead + Send + 'static>(source: R, sender: Sender<io::Result<Vec<u8>>>) {
@@ -75,7 +78,7 @@ fn spawn_reading<R: AsyncRead + Send + 'static>(source: R, sender: Sender<io::Re
                 Err(e) => sender
                     .send(Err(e))
                     .await
-                    .expect("Unable to send buffer to reader channel"),
+                    .expect("Unable to send error to reader channel"),
             }
         }
     });
@@ -126,14 +129,7 @@ mod test {
         where
             Self: Sized,
         {
-            if bytes.len() != 1 {
-                Err(format!(
-                    "Invalid length for XOR seed: {}, must be 1",
-                    bytes.len()
-                ))
-            } else {
-                Ok(Self { seed: bytes[0] })
-            }
+            Ok(Self { seed: bytes[0] })
         }
 
         async fn update(&mut self, mut bytes: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
@@ -152,9 +148,10 @@ mod test {
         let xor = XorCipher::new(vec![0b_0101_0101_u8]).await.unwrap();
         let buffer = Cursor::new(vec![0b_0000_1111_u8; LEN]);
         let mut target = vec![];
-        transform(buffer, xor, &mut target).await.unwrap();
+        let bytes = transform(buffer, xor, &mut target).await.unwrap();
         // assert length
         assert_eq!(target.len(), LEN);
+        assert_eq!(bytes, LEN);
         for byte in target {
             // assert each byte
             assert_eq!(byte, 0b_0101_1010_u8)
