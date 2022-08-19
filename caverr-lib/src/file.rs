@@ -1,12 +1,12 @@
 use crate::transformer::{transform, TransformError, Transformer};
 use std::fmt::Debug;
-use std::path::Path;
+use std::path::PathBuf;
 use tokio::fs::File;
 
 pub async fn file_transform<E: Debug>(
-    source: &Path,
+    source: &PathBuf,
     transformer: impl Transformer<Error = E>,
-    target: &Path,
+    target: &PathBuf,
 ) -> Result<usize, TransformError<E>> {
     let source = File::open(source)
         .await
