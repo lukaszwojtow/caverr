@@ -15,11 +15,12 @@
 )]
 
 use crate::args::{Args, Command};
+use caverr_lib::encrypt::EncryptorHandle;
 use clap::Parser;
-use crossbeam_channel::unbounded;
-use futures::executor::block_on;
 use std::fs::read_dir;
 use std::path::PathBuf;
+
+const TARGET_ROOT: &str = "/tmp"; // TODO make program arg
 
 mod args;
 
@@ -29,77 +30,43 @@ async fn main() {
     match args.command {
         Command::Backup => todo!(),
         Command::Decrypt => todo!(),
-        Command::Encrypt => on_files(args.source, show),
+        Command::Encrypt => on_files(args.source).await,
         Command::Verify => todo!(),
     }
 }
 
-async fn show(e: PathBuf) {
-    println!("{:?}", e);
-}
-//
-// async fn call_encrypt(source: PathBuf) {
-//     println!("enc :{:?}", source);
-//     let parent = source.parent().unwrap();
-//     let target = Path::new(".").join(parent);
-//     if !target.exists() {
-//         if let Err(e) = fs::create_dir_all(&target) {
-//             if e.kind() != ErrorKind::AlreadyExists {
-//                 eprintln!("Unable to create target dir {:?}: {:?}", target, e);
-//             }
-//         }
-//     }
-//     let name = source.as_path().file_name().unwrap();
-//     let target = target.join(name).join(".enc");
-//     let transformer = XorCipher { seed: 1 };
-//     file_transform(&source, transformer, &target).await.unwrap();
-// }
-
-fn on_files<F>(entry: PathBuf, action: fn(PathBuf) -> F)
-where
-    F: std::future::Future<Output = ()>,
-{
-    let (sender, receiver) = unbounded();
-    split(entry, sender);
-    std::thread::scope(|s| {
-        for _ in 0..8 {
-            s.spawn(|| {
-                while let Ok(path) = receiver.recv() {
-                    block_on(action(path));
-                }
-            });
+async fn send_or_queue(entry: PathBuf, queue: &mut Vec<PathBuf>, encryptor: &EncryptorHandle) {
+    // TODO return number of bytes process to show later to the user.
+    if entry.is_file() {
+        if let Err(e) = encryptor.encrypt(entry).await {
+            eprintln!("Unable to process file: {:?}", e);
         }
-    });
+    } else if entry.is_dir() {
+        queue.push(entry);
+    }
 }
 
-fn split(entry: PathBuf, sender: crossbeam_channel::Sender<PathBuf>) {
-    if entry.is_dir() {
-        match read_dir(&entry) {
+async fn on_files(entry: PathBuf) {
+    let mut queue = Vec::with_capacity(1024);
+    let encryptor = EncryptorHandle::new(vec![42], &PathBuf::from(TARGET_ROOT)); // TODO add real key
+    send_or_queue(entry, &mut queue, &encryptor).await;
+    while !queue.is_empty() {
+        let path = queue.swap_remove(queue.len() - 1);
+        match read_dir(&path) {
             Ok(dir) => {
                 for file in dir {
                     match file {
-                        Ok(f) => {
-                            let path = f.path();
-                            if path.is_file() {
-                                sender.send(path).unwrap()
-                            } else if path.is_dir() {
-                                let sender = sender.clone();
-                                tokio::spawn(async move {
-                                    split(path, sender);
-                                });
-                            }
-                        }
+                        Ok(f) => send_or_queue(f.path(), &mut queue, &encryptor).await,
                         Err(ref e) => {
-                            eprintln!("Unable to read entry: {:?} {:?} {}", entry, file, e)
+                            eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
                         }
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Unable to scan directory: {:?}: {}", entry, e)
+                eprintln!("Unable to scan directory: {:?}: {}", path, e)
             }
         }
-    } else if entry.is_file() {
-        sender.send(entry).unwrap();
     }
+    println!("All files processed. Exiting.");
 }

@@ -1,62 +1,40 @@
 use async_trait::async_trait;
-use std::fmt::Debug;
+use std::error::Error;
 use std::io;
-use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 
 /// Reads target in chunks, transforms it using [Transformer::update], and writes to target.
 /// Returns total bytes written or error.
-pub async fn transform<E: Debug, R: AsyncRead + Send + 'static, W: AsyncWrite + Unpin>(
+pub async fn transform<R: AsyncRead + Send + 'static, W: AsyncWrite + Unpin>(
     source: R,
-    transformer: impl Transformer<Error = E>,
+    transformer: impl Transformer,
     target: &mut W,
-) -> Result<usize, TransformError<E>> {
+) -> anyhow::Result<usize> {
     let (sender, receiver) = channel::<io::Result<Vec<u8>>>(16);
     spawn_reading(source, sender);
     transform_and_write(transformer, target, receiver).await
 }
 
-#[derive(Debug, Error)]
-pub enum TransformError<E> {
-    IOError(io::Error),
-    Transform(E),
-}
-
-async fn transform_and_write<E: Debug, W: AsyncWrite + Unpin>(
-    mut transformer: impl Transformer<Error = E>,
+async fn transform_and_write<W: AsyncWrite + Unpin>(
+    mut transformer: impl Transformer,
     target: &mut W,
     mut receiver: Receiver<io::Result<Vec<u8>>>,
-) -> Result<usize, TransformError<E>> {
+) -> anyhow::Result<usize> {
     let mut written = 0;
     while let Some(message) = receiver.recv().await {
-        match message {
-            Ok(bytes) => {
-                let res = transformer
-                    .update(bytes)
-                    .await
-                    .map_err(|e| TransformError::Transform(e))?;
-                if !res.is_empty() {
-                    written += res.len();
-                    target
-                        .write_all(&res)
-                        .await
-                        .map_err(|e| TransformError::IOError(e))?;
-                }
-            }
-            Err(e) => return Err(TransformError::IOError(e)),
+        let bytes = message?;
+        let res = transformer.update(bytes).await?;
+        if !res.is_empty() {
+            written += res.len();
+            target.write_all(&res).await?;
         }
     }
-    let res = transformer
-        .finish()
-        .await
-        .map_err(|e| TransformError::Transform(e))?;
+    let res = transformer.finish().await?;
+
     if !res.is_empty() {
         written += res.len();
-        target
-            .write_all(&res)
-            .await
-            .map_err(|e| TransformError::IOError(e))?;
+        target.write_all(&res).await?
     }
     Ok(written)
 }
@@ -87,7 +65,7 @@ fn spawn_reading<R: AsyncRead + Send + 'static>(source: R, sender: Sender<io::Re
 /// Main encryption / decryption trait. Algorithms have to implement one for encryption and one for decryption.
 #[async_trait]
 pub trait Transformer {
-    type Error;
+    type Error: Error + Send + Sync + 'static;
     /// Creates new [Transformer]. Called once per source file.
     ///
     /// Accepts:
@@ -103,7 +81,7 @@ pub trait Transformer {
     ///
     /// Accepts:
     ///
-    /// `bytes` - chunk of target file
+    /// `bytes` - chunk of the source file
     ///
     /// Returns resulting bytes to be written to a target file or error.
     async fn update(&mut self, bytes: Vec<u8>) -> Result<Vec<u8>, Self::Error>;
@@ -117,19 +95,31 @@ pub trait Transformer {
 mod test {
     use super::*;
     use std::io::Cursor;
+    use thiserror::Error;
+
     struct XorCipher {
         seed: u8,
     }
 
+    #[derive(Debug, Error)]
+    enum XorError {
+        #[error("invalid seed length {0}, must be 1")]
+        InvalidSeedLength(usize),
+    }
+
     #[async_trait]
     impl Transformer for XorCipher {
-        type Error = String;
+        type Error = XorError;
 
         async fn new(bytes: Vec<u8>) -> Result<Self, Self::Error>
         where
             Self: Sized,
         {
-            Ok(Self { seed: bytes[0] })
+            if bytes.len() != 1 {
+                Err(XorError::InvalidSeedLength(bytes.len()))
+            } else {
+                Ok(Self { seed: bytes[0] })
+            }
         }
 
         async fn update(&mut self, mut bytes: Vec<u8>) -> Result<Vec<u8>, Self::Error> {

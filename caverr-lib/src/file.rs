@@ -1,18 +1,18 @@
-use crate::transformer::{transform, TransformError, Transformer};
-use std::fmt::Debug;
-use std::path::PathBuf;
+use crate::transformer::{transform, Transformer};
+use anyhow::Context;
+use std::path::Path;
 use tokio::fs::File;
 
-pub async fn file_transform<E: Debug>(
-    source: &PathBuf,
-    transformer: impl Transformer<Error = E>,
-    target: &PathBuf,
-) -> Result<usize, TransformError<E>> {
-    let source = File::open(source)
+pub async fn file_transform(
+    source_path: &Path,
+    transformer: impl Transformer,
+    target_path: &Path,
+) -> anyhow::Result<usize> {
+    let source = File::open(&source_path)
         .await
-        .map_err(|e| TransformError::IOError(e))?;
-    let mut target = File::create(target)
+        .with_context(|| format!("Unable to read the source file: {:?}", source_path))?;
+    let mut target = File::create(&target_path)
         .await
-        .map_err(|e| TransformError::IOError(e))?;
-    transform(source, transformer, &mut target).await
+        .with_context(|| format!("Unable to write to target file: {:?}", target_path))?;
+    transform(source, transformer, &mut target).await // TODO attach some context to error
 }
