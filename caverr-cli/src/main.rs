@@ -15,7 +15,8 @@
 )]
 
 use crate::args::{Args, Command};
-use caverr_lib::encrypt::EncryptorHandle;
+use caverr_lib::worker::keys::generate_keys;
+use caverr_lib::worker::EncryptorHandle;
 use clap::Parser;
 use std::fs::read_dir;
 use std::path::PathBuf;
@@ -30,8 +31,9 @@ async fn main() {
     match args.command {
         Command::Backup => todo!(),
         Command::Decrypt => todo!(),
-        Command::Encrypt => on_files(args.source).await,
+        Command::Encrypt => on_files(args.source.unwrap()).await,
         Command::Verify => todo!(),
+        Command::GenKeys => generate_keys().await,
     }
 }
 
