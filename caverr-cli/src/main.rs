@@ -15,8 +15,8 @@
 )]
 
 use crate::args::{Args, Command};
+use caverr_lib::worker::encryptor::EncryptorHandle;
 use caverr_lib::worker::keys::generate_keys;
-use caverr_lib::worker::EncryptorHandle;
 use clap::Parser;
 use std::fs::read_dir;
 use std::path::PathBuf;
