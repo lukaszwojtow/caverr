@@ -10,13 +10,13 @@ pub struct EncryptorHandle {
 }
 
 impl EncryptorHandle {
-    pub fn new(key: Vec<u8>, target_root: &Path) -> Self {
+    pub fn new(_key_file: &Path, target_root: &Path) -> Self {
         let (sender, receiver) = mpsc::channel(1024);
         let target_dir = target_root
             .canonicalize()
             .expect("Target directory doesn't exist");
         // TODO spawn more actors to handle encrypting more than one file at a time.
-        let actor = EncryptorWorker::new(target_dir, key, receiver);
+        let actor = EncryptorWorker::new(target_dir, vec![0], receiver);
         tokio::spawn(start_loop(actor));
         Self { sender }
     }
