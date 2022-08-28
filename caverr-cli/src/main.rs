@@ -14,12 +14,13 @@
     variant_size_differences
 )]
 
-use crate::args::{Args, Command};
+use crate::args::{validate_args, Args, Command};
 use caverr_lib::worker::encryptor::EncryptorHandle;
 use caverr_lib::worker::keys::generate_keys;
 use clap::Parser;
 use std::fs::read_dir;
 use std::path::PathBuf;
+use std::process::exit;
 
 const TARGET_ROOT: &str = "/tmp"; // TODO make program arg
 
@@ -28,6 +29,10 @@ mod args;
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
+    if let Err(e) = validate_args(&args) {
+        eprintln!("{e}");
+        exit(1);
+    }
     match args.command {
         Command::Backup => todo!(),
         Command::Decrypt => todo!(),
