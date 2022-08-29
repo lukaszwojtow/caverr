@@ -17,7 +17,7 @@
 use crate::args::{validate_args, Args, Command};
 use crate::exit_codes::ExitCodes;
 use caverr_lib::worker::encryptor::EncryptorHandle;
-use caverr_lib::worker::keys::{generate_keys, write_private_key, write_public_key};
+use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
 use std::fs::read_dir;
 use std::path::PathBuf;

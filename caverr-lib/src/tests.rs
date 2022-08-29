@@ -1,4 +1,4 @@
-use crate::worker::keys::{generate_keys, write_private_key, write_public_key};
+use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 

@@ -66,16 +66,6 @@ fn spawn_reading<R: AsyncRead + Send + 'static>(source: R, sender: Sender<io::Re
 #[async_trait]
 pub trait Transformer {
     type Error: Error + Send + Sync + 'static;
-    /// Creates new [Transformer]. Called once per source file.
-    ///
-    /// Accepts:
-    ///
-    /// `bytes` - Content of initial state file. Can be key, passphrase, configuration, etc...
-    ///
-    /// Returns Self or error.
-    async fn new(bytes: Vec<u8>) -> Result<Self, Self::Error>
-    where
-        Self: Sized;
 
     /// Called repeatedly with new bytes from the source file.
     ///
@@ -89,62 +79,4 @@ pub trait Transformer {
     /// Called when finished reading the source file.
     /// Can return bytes to be added to the target file.
     async fn finish(self) -> Result<Vec<u8>, Self::Error>;
-}
-
-#[cfg(test)]
-mod test {
-    use super::*;
-    use std::io::Cursor;
-    use thiserror::Error;
-
-    struct XorCipher {
-        seed: u8,
-    }
-
-    #[derive(Debug, Error)]
-    enum XorError {
-        #[error("invalid seed length {0}, must be 1")]
-        InvalidSeedLength(usize),
-    }
-
-    #[async_trait]
-    impl Transformer for XorCipher {
-        type Error = XorError;
-
-        async fn new(bytes: Vec<u8>) -> Result<Self, Self::Error>
-        where
-            Self: Sized,
-        {
-            if bytes.len() != 1 {
-                Err(XorError::InvalidSeedLength(bytes.len()))
-            } else {
-                Ok(Self { seed: bytes[0] })
-            }
-        }
-
-        async fn update(&mut self, mut bytes: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
-            bytes.iter_mut().for_each(|b| *b ^= self.seed);
-            Ok(bytes)
-        }
-
-        async fn finish(mut self) -> Result<Vec<u8>, Self::Error> {
-            Ok(Default::default())
-        }
-    }
-
-    #[tokio::test]
-    async fn should_transform() {
-        const LEN: usize = 5000;
-        let xor = XorCipher::new(vec![0b_0101_0101_u8]).await.unwrap();
-        let buffer = Cursor::new(vec![0b_0000_1111_u8; LEN]);
-        let mut target = vec![];
-        let bytes = transform(buffer, xor, &mut target).await.unwrap();
-        // assert length
-        assert_eq!(target.len(), LEN);
-        assert_eq!(bytes, LEN);
-        for byte in target {
-            // assert each byte
-            assert_eq!(byte, 0b_0101_1010_u8)
-        }
-    }
 }

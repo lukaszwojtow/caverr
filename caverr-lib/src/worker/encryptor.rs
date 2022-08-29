@@ -1,7 +1,8 @@
 use crate::file::file_transform;
 use crate::path::build_relative_path;
-use crate::transformer::Transformer;
-use crate::xor::XorCipher;
+use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
+use rsa::pkcs8::DecodePublicKey;
+use rsa::RsaPublicKey;
 use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 
@@ -10,13 +11,14 @@ pub struct EncryptorHandle {
 }
 
 impl EncryptorHandle {
-    pub fn new(_key_file: &Path, target_root: &Path) -> Self {
+    pub fn new(key_file: &Path, target_root: &Path) -> Self {
+        let public_key = RsaPublicKey::read_public_key_pem_file(key_file).unwrap(); // TODO fix
         let (sender, receiver) = mpsc::channel(1024);
         let target_dir = target_root
             .canonicalize()
             .expect("Target directory doesn't exist");
         // TODO spawn more actors to handle encrypting more than one file at a time.
-        let actor = EncryptorWorker::new(target_dir, vec![0], receiver);
+        let actor = EncryptorWorker::new(target_dir, RsaKey::PublicKey(public_key), receiver);
         tokio::spawn(start_loop(actor));
         Self { sender }
     }
@@ -36,7 +38,7 @@ async fn start_loop(mut actor: EncryptorWorker) {
 
 struct EncryptorWorker {
     receiver: mpsc::Receiver<EncMessage>,
-    key: Vec<u8>,
+    key: RsaKey,
     target_dir: PathBuf,
 }
 
@@ -50,7 +52,7 @@ enum EncMessage {
 }
 
 impl EncryptorWorker {
-    fn new(target_dir: PathBuf, key: Vec<u8>, receiver: mpsc::Receiver<EncMessage>) -> Self {
+    fn new(target_dir: PathBuf, key: RsaKey, receiver: mpsc::Receiver<EncMessage>) -> Self {
         EncryptorWorker {
             key,
             receiver,
@@ -67,8 +69,8 @@ impl EncryptorWorker {
     }
 
     async fn encrypt(&self, path: &Path) -> anyhow::Result<usize> {
-        let xor = XorCipher::new(self.key.clone()).await?;
+        let rsa = RsaTransformer::new(self.key.clone());
         let target_path = build_relative_path(path, &self.target_dir)?;
-        file_transform(path, xor, &target_path).await
+        file_transform(path, rsa, &target_path).await
     }
 }
