@@ -1,4 +1,4 @@
-use crate::worker::encryptor::EncryptorHandle;
+use crate::worker::handler::RsaHandler;
 use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use std::fs;
 use tokio::fs::File;
@@ -50,8 +50,8 @@ async fn should_generate_keys_to_encrypt() {
     let target_dir = test_dir.path().join("target");
     fs::create_dir_all(&target_dir).expect("Unable to create target_dir");
     let encryptor =
-        EncryptorHandle::new(&public_key_path, &target_dir).expect("Unable to create encryptor");
-    let result = encryptor.encrypt(original_file_path.clone()).await;
+        RsaHandler::encryptor(&public_key_path, &target_dir).expect("Unable to create encryptor");
+    let result = encryptor.transform(original_file_path.clone()).await;
     assert!(result.is_ok());
     let encrypted_path = result.unwrap().1;
     assert!(encrypted_path.is_file());

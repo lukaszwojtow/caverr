@@ -16,7 +16,7 @@
 
 use crate::args::{validate_args, Args, Command};
 use crate::exit_codes::ExitCodes;
-use caverr_lib::worker::encryptor::EncryptorHandle;
+use caverr_lib::worker::handler::RsaHandler;
 use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
 use std::fs::read_dir;
@@ -43,7 +43,7 @@ async fn main() {
 }
 
 async fn encrypt(args: Args) {
-    match EncryptorHandle::new(&args.key.unwrap(), &args.target.unwrap()) {
+    match RsaHandler::encryptor(&args.key.unwrap(), &args.target.unwrap()) {
         Ok(encryptor) => walk_dirs(args.source.unwrap(), encryptor).await,
         Err(e) => {
             eprintln!("Unable to create encryptor: {:?}", e);
@@ -72,10 +72,10 @@ async fn get_new_keys() {
     }
 }
 
-async fn send_or_queue(entry: PathBuf, queue: &mut Vec<PathBuf>, encryptor: &EncryptorHandle) {
+async fn send_or_queue(entry: PathBuf, queue: &mut Vec<PathBuf>, encryptor: &RsaHandler) {
     // TODO return number of bytes process to show later to the user.
     if entry.is_file() {
-        if let Err(e) = encryptor.encrypt(entry).await {
+        if let Err(e) = encryptor.transform(entry).await {
             eprintln!("Unable to process file: {:?}", e);
         }
     } else if entry.is_dir() {
@@ -83,7 +83,7 @@ async fn send_or_queue(entry: PathBuf, queue: &mut Vec<PathBuf>, encryptor: &Enc
     }
 }
 
-async fn walk_dirs(entry: PathBuf, encryptor: EncryptorHandle) {
+async fn walk_dirs(entry: PathBuf, encryptor: RsaHandler) {
     let mut queue = Vec::with_capacity(1024);
     send_or_queue(entry, &mut queue, &encryptor).await;
     while !queue.is_empty() {

@@ -1,2 +1,2 @@
-pub mod encryptor;
+pub mod handler;
 pub mod rsa;
