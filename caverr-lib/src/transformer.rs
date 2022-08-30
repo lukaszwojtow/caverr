@@ -30,12 +30,6 @@ async fn transform_and_write<W: AsyncWrite + Unpin>(
             target.write_all(&res).await?;
         }
     }
-    let res = transformer.finish().await?;
-
-    if !res.is_empty() {
-        written += res.len();
-        target.write_all(&res).await?
-    }
     Ok(written)
 }
 
@@ -43,7 +37,7 @@ fn spawn_reading<R: AsyncRead + Send + 'static>(source: R, sender: Sender<io::Re
     tokio::spawn(async move {
         let mut source = Box::pin(source);
         loop {
-            let mut buffer = vec![0u8; 4096];
+            let mut buffer = vec![0u8; 256]; // TODO extend this buffer to at least one page (4096) or use bufreader
             match source.read(&mut buffer).await {
                 Ok(len) if len == 0 => return,
                 Ok(len) => {
@@ -75,8 +69,4 @@ pub trait Transformer {
     ///
     /// Returns resulting bytes to be written to a target file or error.
     async fn update(&mut self, bytes: Vec<u8>) -> Result<Vec<u8>, Self::Error>;
-
-    /// Called when finished reading the source file.
-    /// Can return bytes to be added to the target file.
-    async fn finish(self) -> Result<Vec<u8>, Self::Error>;
 }

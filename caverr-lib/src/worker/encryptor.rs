@@ -1,6 +1,7 @@
 use crate::file::file_transform;
 use crate::path::build_relative_path;
 use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
+use anyhow::Context;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::RsaPublicKey;
 use std::path::{Path, PathBuf};
@@ -11,16 +12,17 @@ pub struct EncryptorHandle {
 }
 
 impl EncryptorHandle {
-    pub fn new(key_file: &Path, target_root: &Path) -> Self {
-        let public_key = RsaPublicKey::read_public_key_pem_file(key_file).unwrap(); // TODO fix
+    pub fn new(key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
+        let public_key = RsaPublicKey::read_public_key_pem_file(key_file)
+            .with_context(|| format!("Unable to read public key from file {:?}", key_file))?;
         let (sender, receiver) = mpsc::channel(1024);
         let target_dir = target_root
             .canonicalize()
-            .expect("Target directory doesn't exist");
+            .with_context(|| "Target directory doesn't exist")?;
         // TODO spawn more actors to handle encrypting more than one file at a time.
         let actor = EncryptorWorker::new(target_dir, RsaKey::PublicKey(public_key), receiver);
         tokio::spawn(start_loop(actor));
-        Self { sender }
+        Ok(Self { sender })
     }
 
     pub async fn encrypt(&self, path: PathBuf) -> anyhow::Result<usize> {

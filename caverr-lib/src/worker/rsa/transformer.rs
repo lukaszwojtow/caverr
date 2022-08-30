@@ -33,10 +33,6 @@ impl Transformer for RsaTransformer {
             RsaKey::PrivateKey(key) => Ok(key.decrypt(padding(), bytes.as_ref())?),
         }
     }
-
-    async fn finish(self) -> Result<Vec<u8>, Self::Error> {
-        Ok(vec![])
-    }
 }
 
 fn padding() -> PaddingScheme {

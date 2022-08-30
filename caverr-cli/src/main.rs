@@ -23,8 +23,6 @@ use std::fs::read_dir;
 use std::path::PathBuf;
 use std::process::exit;
 
-const TARGET_ROOT: &str = "/tmp"; // TODO make program arg
-
 mod args;
 mod exit_codes;
 
@@ -45,8 +43,13 @@ async fn main() {
 }
 
 async fn encrypt(args: Args) {
-    let encryptor = EncryptorHandle::new(&args.key.unwrap(), &PathBuf::from(TARGET_ROOT));
-    walk_dirs(args.source.unwrap(), encryptor).await;
+    match EncryptorHandle::new(&args.key.unwrap(), &args.target.unwrap()) {
+        Ok(encryptor) => walk_dirs(args.source.unwrap(), encryptor).await,
+        Err(e) => {
+            eprintln!("Unable to create encryptor: {:?}", e);
+            exit(ExitCodes::EncryptorError as i32)
+        }
+    }
 }
 
 async fn get_new_keys() {
