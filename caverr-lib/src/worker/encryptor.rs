@@ -25,7 +25,7 @@ impl EncryptorHandle {
         Ok(Self { sender })
     }
 
-    pub async fn encrypt(&self, path: PathBuf) -> anyhow::Result<usize> {
+    pub async fn encrypt(&self, path: PathBuf) -> anyhow::Result<(usize, PathBuf)> {
         let (ret, rcv) = oneshot::channel();
         self.sender.send(EncMessage::Encrypt { path, ret }).await?;
         rcv.await?
@@ -49,7 +49,7 @@ enum EncMessage {
     // TODO change to struct
     Encrypt {
         path: PathBuf,
-        ret: oneshot::Sender<anyhow::Result<usize>>,
+        ret: oneshot::Sender<anyhow::Result<(usize, PathBuf)>>,
     },
 }
 
@@ -70,9 +70,10 @@ impl EncryptorWorker {
         }
     }
 
-    async fn encrypt(&self, path: &Path) -> anyhow::Result<usize> {
+    async fn encrypt(&self, path: &Path) -> anyhow::Result<(usize, PathBuf)> {
         let rsa = RsaTransformer::new(self.key.clone());
         let target_path = build_relative_path(path, &self.target_dir)?;
-        file_transform(path, rsa, &target_path).await
+        let bytes = file_transform(path, rsa, &target_path).await?;
+        Ok((bytes, target_path))
     }
 }

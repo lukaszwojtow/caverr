@@ -1,4 +1,3 @@
-use crate::path::build_relative_path;
 use crate::worker::encryptor::EncryptorHandle;
 use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use std::fs;
@@ -54,8 +53,7 @@ async fn should_generate_keys_to_encrypt() {
         EncryptorHandle::new(&public_key_path, &target_dir).expect("Unable to create encryptor");
     let result = encryptor.encrypt(original_file_path.clone()).await;
     assert!(result.is_ok());
-    let encrypted_path = build_relative_path(&original_file_path, &target_dir)
-        .expect("Unable to build relative path");
+    let encrypted_path = result.unwrap().1;
     assert!(encrypted_path.is_file());
 
     // Create decryption target dir.
