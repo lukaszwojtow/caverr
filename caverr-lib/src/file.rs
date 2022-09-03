@@ -7,6 +7,7 @@ pub async fn file_transform(
     source_path: &Path,
     transformer: impl Transformer,
     target_path: &Path,
+    message_len: usize,
 ) -> anyhow::Result<usize> {
     let source = File::open(&source_path)
         .await
@@ -14,7 +15,7 @@ pub async fn file_transform(
     let mut target = File::create(&target_path)
         .await
         .with_context(|| format!("Unable to write to target file: {:?}", target_path))?;
-    transform(source, transformer, &mut target)
+    transform(source, transformer, message_len, &mut target)
         .await
         .with_context(|| {
             format!(

@@ -2,8 +2,8 @@ use crate::file::file_transform;
 use crate::path::build_relative_path;
 use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
 use anyhow::Context;
-use rsa::pkcs8::DecodePublicKey;
-use rsa::RsaPublicKey;
+use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 
@@ -18,19 +18,53 @@ impl RsaHandler {
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         // TODO spawn more actors to allow handling more than one file at a time.
-        let public_key =
-            RsaPublicKey::read_public_key_pem_file(public_key_file).with_context(|| {
-                format!("Unable to read public key from file {:?}", public_key_file)
-            })?;
-        let actor = RsaWorker::new(target_dir, RsaKey::PublicKey(public_key), receiver);
+        let worker = RsaWorker::new(
+            target_dir,
+            Self::prepare_public_key(public_key_file)?,
+            receiver,
+        );
+        tokio::spawn(start_loop(worker));
+        Ok(Self { sender })
+    }
+
+    pub fn decryptor(private_key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
+        let (sender, receiver) = mpsc::channel(1024);
+        let target_dir = target_root
+            .canonicalize()
+            .with_context(|| "Target directory doesn't exist")?;
+        // TODO spawn more actors to allow handling more than one file at a time.
+        let actor = RsaWorker::new(
+            target_dir,
+            Self::prepare_private_key(private_key_file)?,
+            receiver,
+        );
         tokio::spawn(start_loop(actor));
         Ok(Self { sender })
     }
 
     pub async fn transform(&self, path: PathBuf) -> anyhow::Result<(usize, PathBuf)> {
-        let (ret, rcv) = oneshot::channel();
-        self.sender.send(Message { path, ret }).await?;
+        let (snd, rcv) = oneshot::channel();
+        self.sender.send(Message { path, channel: snd }).await?;
         rcv.await?
+    }
+
+    fn prepare_public_key(public_key_file: &Path) -> anyhow::Result<RsaKey> {
+        let public_key =
+            RsaPublicKey::read_public_key_pem_file(public_key_file).with_context(|| {
+                format!("Unable to read public key from file {:?}", public_key_file)
+            })?;
+        Ok(RsaKey::PublicKey(public_key))
+    }
+
+    fn prepare_private_key(private_key_file: &Path) -> anyhow::Result<RsaKey> {
+        let private_key =
+            RsaPrivateKey::read_pkcs8_pem_file(private_key_file).with_context(|| {
+                format!(
+                    "Unable to read private key from file {:?}",
+                    private_key_file
+                )
+            })?;
+        Ok(RsaKey::PrivateKey(private_key))
     }
 }
 
@@ -49,7 +83,7 @@ struct RsaWorker {
 #[derive(Debug)]
 struct Message {
     path: PathBuf,
-    ret: oneshot::Sender<anyhow::Result<(usize, PathBuf)>>,
+    channel: oneshot::Sender<anyhow::Result<(usize, PathBuf)>>,
 }
 
 impl RsaWorker {
@@ -60,9 +94,10 @@ impl RsaWorker {
             target_dir,
         }
     }
+
     async fn handle_message(&mut self, msg: Message) {
         let result = self.work(&msg.path).await;
-        msg.ret
+        msg.channel
             .send(result)
             .expect("Unable to send result from worker");
     }
@@ -70,7 +105,7 @@ impl RsaWorker {
     async fn work(&self, path: &Path) -> anyhow::Result<(usize, PathBuf)> {
         let rsa = RsaTransformer::new(self.key.clone());
         let target_path = build_relative_path(path, &self.target_dir)?;
-        let bytes = file_transform(path, rsa, &target_path).await?;
+        let bytes = file_transform(path, rsa, &target_path, self.key.message_len()).await?;
         Ok((bytes, target_path))
     }
 }

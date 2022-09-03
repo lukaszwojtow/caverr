@@ -1,4 +1,5 @@
 use crate::transformer::Transformer;
+use crate::worker::rsa::{DECRYPTION_MESSAGE_SIZE, ENCRYPTION_MESSAGE_SIZE};
 use async_trait::async_trait;
 use rand::thread_rng;
 use rsa::{PaddingScheme, PublicKey, RsaPrivateKey, RsaPublicKey};
@@ -10,6 +11,15 @@ use sha2::Sha256;
 pub enum RsaKey {
     PublicKey(RsaPublicKey),
     PrivateKey(RsaPrivateKey),
+}
+
+impl RsaKey {
+    pub fn message_len(&self) -> usize {
+        match self {
+            RsaKey::PublicKey(_) => ENCRYPTION_MESSAGE_SIZE,
+            RsaKey::PrivateKey(_) => DECRYPTION_MESSAGE_SIZE,
+        }
+    }
 }
 
 pub struct RsaTransformer {

@@ -1,3 +1,4 @@
+use crate::worker::rsa::KEY_BITS;
 use rand::thread_rng;
 use rsa::pkcs8::LineEnding::CRLF;
 use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
@@ -8,7 +9,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 pub async fn generate_keys() -> rsa::errors::Result<(RsaPrivateKey, RsaPublicKey)> {
     let mut rng = thread_rng();
-    let bits = 4096;
+    let bits = KEY_BITS;
     let private_key = RsaPrivateKey::new(&mut rng, bits)?;
     let public_key = RsaPublicKey::from(&private_key);
     Ok((private_key, public_key))

@@ -9,10 +9,11 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 pub async fn transform<R: AsyncRead + Send + 'static, W: AsyncWrite + Unpin>(
     source: R,
     transformer: impl Transformer,
+    message_len: usize,
     target: &mut W,
 ) -> anyhow::Result<usize> {
     let (sender, receiver) = channel::<io::Result<Vec<u8>>>(16);
-    spawn_reading(source, sender);
+    spawn_reading(source, sender, message_len);
     transform_and_write(transformer, target, receiver).await
 }
 
@@ -33,11 +34,15 @@ async fn transform_and_write<W: AsyncWrite + Unpin>(
     Ok(written)
 }
 
-fn spawn_reading<R: AsyncRead + Send + 'static>(source: R, sender: Sender<io::Result<Vec<u8>>>) {
+fn spawn_reading<R: AsyncRead + Send + 'static>(
+    source: R,
+    sender: Sender<io::Result<Vec<u8>>>,
+    message_len: usize,
+) {
     tokio::spawn(async move {
         let mut source = Box::pin(source);
         loop {
-            let mut buffer = vec![0u8; 256]; // TODO extend this buffer to at least one page (4096) or use bufreader
+            let mut buffer = vec![0u8; message_len]; // TODO use bufreader
             match source.read(&mut buffer).await {
                 Ok(len) if len == 0 => return,
                 Ok(len) => {
