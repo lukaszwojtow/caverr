@@ -75,7 +75,6 @@ version = "0.1.0"
 dependencies = [
  "caverr-lib",
  "clap",
- "lazy_static",
  "rusty-hook",
  "tokio",
 ]

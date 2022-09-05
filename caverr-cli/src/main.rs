@@ -16,26 +16,17 @@
 
 use crate::args::{validate_args, Args, Command};
 use crate::exit_codes::ExitCodes;
+use caverr_lib::stats::StatHandler;
 use caverr_lib::worker::handler::RsaHandler;
 use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
-use lazy_static::lazy_static;
 use std::fs::read_dir;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::{Arc, RwLock};
 use tokio::signal::unix::{signal, SignalKind};
 
 mod args;
 mod exit_codes;
-
-lazy_static! {
-    static ref STATS: Arc<RwLock<Stats>> = Arc::new(RwLock::new(Stats {
-        bytes: 0,
-        files: 0,
-        last: PathBuf::from("<no files processed yet>")
-    }));
-}
 
 #[tokio::main]
 async fn main() {
@@ -53,19 +44,20 @@ async fn main() {
     }
 }
 
-async fn show_stats_at_signal() {
-    let mut stream = signal(SignalKind::hangup()).expect("Unable to register signal handler");
+async fn show_stats_at_signal(handler: StatHandler) {
+    let mut signals = signal(SignalKind::hangup()).expect("Unable to register signal handler");
     loop {
-        stream.recv().await;
-        let stats = STATS.read().expect("Unable to lock stats").clone();
-        println!("Current stats: {:?}", stats);
+        signals.recv().await;
+        let stats = handler.current().await;
+        println!("{:?}", stats);
     }
 }
 
 async fn encrypt(args: Args) {
-    tokio::spawn(show_stats_at_signal());
+    let stat_handler = StatHandler::default();
+    tokio::spawn(show_stats_at_signal(stat_handler.clone()));
     match RsaHandler::encryptor(&args.key.unwrap(), &args.target.unwrap()) {
-        Ok(encryptor) => walk_dirs(args.source.unwrap(), encryptor).await,
+        Ok(encryptor) => walk_dirs(args.source.unwrap(), encryptor, stat_handler).await,
         Err(e) => {
             eprintln!("Unable to create encryptor: {:?}", e);
             exit(ExitCodes::EncryptorError as i32)
@@ -93,14 +85,16 @@ async fn get_new_keys() {
     }
 }
 
-async fn transform_or_queue(entry: PathBuf, queue: &mut Vec<PathBuf>, encryptor: &RsaHandler) {
+async fn transform_or_queue(
+    entry: PathBuf,
+    queue: &mut Vec<PathBuf>,
+    encryptor: &RsaHandler,
+    stats: &StatHandler,
+) {
     if entry.is_file() {
         match encryptor.transform(entry).await {
             Ok((bytes, path)) => {
-                let mut stats = STATS.write().unwrap();
-                stats.bytes += bytes;
-                stats.files += 1;
-                stats.last = path;
+                stats.update(bytes, path).await;
             }
             Err(e) => eprintln!("Unable to process file: {:?}", e),
         }
@@ -109,16 +103,16 @@ async fn transform_or_queue(entry: PathBuf, queue: &mut Vec<PathBuf>, encryptor:
     }
 }
 
-async fn walk_dirs(entry: PathBuf, encryptor: RsaHandler) {
+async fn walk_dirs(entry: PathBuf, encryptor: RsaHandler, stats: StatHandler) {
     let mut queue = Vec::with_capacity(1024);
-    transform_or_queue(entry, &mut queue, &encryptor).await;
+    transform_or_queue(entry, &mut queue, &encryptor, &stats).await;
     while !queue.is_empty() {
         let path = queue.swap_remove(queue.len() - 1);
         match read_dir(&path) {
             Ok(dir) => {
                 for file in dir {
                     match file {
-                        Ok(f) => transform_or_queue(f.path(), &mut queue, &encryptor).await,
+                        Ok(f) => transform_or_queue(f.path(), &mut queue, &encryptor, &stats).await,
                         Err(ref e) => {
                             eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
                         }
@@ -131,11 +125,4 @@ async fn walk_dirs(entry: PathBuf, encryptor: RsaHandler) {
         }
     }
     println!("All files processed. Exiting.");
-}
-
-#[derive(Clone, Debug)]
-struct Stats {
-    pub(crate) bytes: usize,
-    pub(crate) files: usize,
-    pub(crate) last: PathBuf,
 }
