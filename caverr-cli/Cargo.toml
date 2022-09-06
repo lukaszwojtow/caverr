@@ -1,5 +1,5 @@
 [package]
-name = "caver-cli"
+name = "caverr"
 version = "0.1.0"
 edition = "2021"
 authors = ["Łukasz Wojtów <lukasz.wojtow@gmail.com>"]
