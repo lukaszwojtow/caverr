@@ -21,7 +21,7 @@ use caverr_lib::worker::handler::RsaHandler;
 use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
 use std::fs::read_dir;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use tokio::signal::unix::{signal, SignalKind};
 
@@ -37,7 +37,7 @@ async fn main() {
     }
     match args.command {
         Command::Backup => todo!(),
-        Command::Decrypt => todo!(),
+        Command::Decrypt => decrypt(args).await,
         Command::Encrypt => encrypt(args).await,
         Command::Verify => todo!(),
         Command::GenKeys => get_new_keys().await,
@@ -53,16 +53,42 @@ async fn show_stats_at_signal(handler: StatHandler) {
     }
 }
 
-async fn encrypt(args: Args) {
-    let stat_handler = StatHandler::default();
-    tokio::spawn(show_stats_at_signal(stat_handler.clone()));
-    match RsaHandler::encryptor(&args.key.unwrap(), &args.target.unwrap()) {
-        Ok(encryptor) => walk_dirs(args.source.unwrap(), encryptor, stat_handler).await,
+fn get_decryptor(key: &Path, target: &Path) -> RsaHandler {
+    match RsaHandler::decryptor(key, target) {
+        Ok(decryptor) => decryptor,
+        Err(e) => {
+            eprintln!("Unable to create decryptor: {:?}", e);
+            exit(ExitCodes::EncryptorError as i32)
+        }
+    }
+}
+
+fn get_encryptor(key: &Path, target: &Path) -> RsaHandler {
+    match RsaHandler::encryptor(key, target) {
+        Ok(decryptor) => decryptor,
         Err(e) => {
             eprintln!("Unable to create encryptor: {:?}", e);
             exit(ExitCodes::EncryptorError as i32)
         }
     }
+}
+
+fn start_stat_handler() -> StatHandler {
+    let stat_handler = StatHandler::default();
+    tokio::spawn(show_stats_at_signal(stat_handler.clone()));
+    stat_handler
+}
+
+async fn decrypt(args: Args) {
+    let stat_handler = start_stat_handler();
+    let decryptor = get_decryptor(&args.key.unwrap(), &args.target.unwrap());
+    walk_dirs(args.source.unwrap(), decryptor, stat_handler).await;
+}
+
+async fn encrypt(args: Args) {
+    let stat_handler = start_stat_handler();
+    let encryptor = get_encryptor(&args.key.unwrap(), &args.target.unwrap());
+    walk_dirs(args.source.unwrap(), encryptor, stat_handler).await;
 }
 
 async fn get_new_keys() {
@@ -103,16 +129,17 @@ async fn transform_or_queue(
     }
 }
 
-async fn walk_dirs(entry: PathBuf, encryptor: RsaHandler, stats: StatHandler) {
+async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
     let mut queue = Vec::with_capacity(1024);
-    transform_or_queue(entry, &mut queue, &encryptor, &stats).await;
-    while !queue.is_empty() {
-        let path = queue.swap_remove(queue.len() - 1);
+    transform_or_queue(entry, &mut queue, &transformer, &stats).await;
+    while let Some(path) = queue.pop() {
         match read_dir(&path) {
             Ok(dir) => {
                 for file in dir {
                     match file {
-                        Ok(f) => transform_or_queue(f.path(), &mut queue, &encryptor, &stats).await,
+                        Ok(f) => {
+                            transform_or_queue(f.path(), &mut queue, &transformer, &stats).await
+                        }
                         Err(ref e) => {
                             eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
                         }
