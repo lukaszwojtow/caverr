@@ -6,40 +6,34 @@ use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::io;
 use std::path::{Path, PathBuf};
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::{mpsc, oneshot};
 
+#[derive(Clone)]
 pub struct RsaHandler {
     sender: mpsc::Sender<Message>,
 }
 
 impl RsaHandler {
     pub fn encryptor(public_key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
-        let (sender, receiver) = mpsc::channel(1024);
         let target_dir = target_root
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         // TODO spawn more actors to allow handling more than one file at a time.
-        let worker = RsaWorker::new(
-            target_dir,
-            Self::prepare_public_key(public_key_file)?,
-            receiver,
-        );
-        tokio::spawn(start_loop(worker));
+        let key = Self::prepare_public_key(public_key_file)?;
+        let (sender, receiver) = mpsc::channel(1024);
+        Self::start_worker(receiver, target_dir, key);
         Ok(Self { sender })
     }
 
     pub fn decryptor(private_key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
-        let (sender, receiver) = mpsc::channel(1024);
         let target_dir = target_root
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         // TODO spawn more actors to allow handling more than one file at a time.
-        let actor = RsaWorker::new(
-            target_dir,
-            Self::prepare_private_key(private_key_file)?,
-            receiver,
-        );
-        tokio::spawn(start_loop(actor));
+        let key = Self::prepare_private_key(private_key_file)?;
+        let (sender, receiver) = mpsc::channel(1024);
+        Self::start_worker(receiver, target_dir, key);
         Ok(Self { sender })
     }
 
@@ -67,6 +61,11 @@ impl RsaHandler {
             })?;
         Ok(RsaKey::PrivateKey(private_key))
     }
+
+    fn start_worker(receiver: Receiver<Message>, target_dir: PathBuf, key: RsaKey) {
+        let worker = RsaWorker::new(target_dir, key, receiver);
+        tokio::spawn(start_loop(worker));
+    }
 }
 
 #[derive(Debug)]
@@ -82,7 +81,7 @@ async fn start_loop(mut actor: RsaWorker) {
 }
 
 struct RsaWorker {
-    receiver: mpsc::Receiver<Message>,
+    receiver: Receiver<Message>,
     key: RsaKey,
     target_dir: PathBuf,
 }
@@ -94,7 +93,7 @@ struct Message {
 }
 
 impl RsaWorker {
-    fn new(target_dir: PathBuf, key: RsaKey, receiver: mpsc::Receiver<Message>) -> Self {
+    fn new(target_dir: PathBuf, key: RsaKey, receiver: Receiver<Message>) -> Self {
         RsaWorker {
             key,
             receiver,

@@ -117,11 +117,11 @@ async fn get_new_keys() {
 async fn transform_or_queue(
     entry: PathBuf,
     queue: &mut Vec<PathBuf>,
-    encryptor: &RsaHandler,
+    transformer: &RsaHandler,
     stats: &StatHandler,
 ) {
     if entry.is_file() {
-        match encryptor.transform(entry).await {
+        match transformer.transform(entry).await {
             Ok(transformed) => {
                 if let Transformed::Processed(bytes, path) = transformed {
                     stats.update(bytes, path).await
