@@ -27,6 +27,7 @@ use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::task::JoinHandle;
 
 mod args;
 mod exit_codes;
@@ -119,8 +120,24 @@ async fn transform_or_queue(
     queue: &mut Vec<PathBuf>,
     transformer: &RsaHandler,
     stats: &StatHandler,
+    tasks: &mut Vec<JoinHandle<()>>,
 ) {
     if entry.is_file() {
+        let transformer = transformer.clone();
+        let stats = stats.clone();
+        let task = spawn_transforming_task(entry, transformer, stats);
+        tasks.push(task);
+    } else if entry.is_dir() {
+        queue.push(entry);
+    }
+}
+
+fn spawn_transforming_task(
+    entry: PathBuf,
+    transformer: RsaHandler,
+    stats: StatHandler,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
         match transformer.transform(entry).await {
             Ok(transformed) => {
                 if let Transformed::Processed(bytes, path) = transformed {
@@ -129,21 +146,27 @@ async fn transform_or_queue(
             }
             Err(e) => eprintln!("Unable to process file: {:?}", e),
         }
-    } else if entry.is_dir() {
-        queue.push(entry);
-    }
+    })
 }
 
 async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
     let mut queue = Vec::with_capacity(1024);
-    transform_or_queue(entry, &mut queue, &transformer, &stats).await;
+    let mut tasks = Vec::with_capacity(1024);
+    transform_or_queue(entry, &mut queue, &transformer, &stats, &mut tasks).await;
     while let Some(path) = queue.pop() {
         match read_dir(&path) {
             Ok(dir) => {
                 for file in dir {
                     match file {
                         Ok(f) => {
-                            transform_or_queue(f.path(), &mut queue, &transformer, &stats).await
+                            transform_or_queue(
+                                f.path(),
+                                &mut queue,
+                                &transformer,
+                                &stats,
+                                &mut tasks,
+                            )
+                            .await
                         }
                         Err(ref e) => {
                             eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
@@ -156,5 +179,6 @@ async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) 
             }
         }
     }
+    futures::future::join_all(tasks).await;
     println!("All files processed. Exiting.");
 }

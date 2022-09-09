@@ -2,16 +2,18 @@ use crate::file::file_transform;
 use crate::path::build_relative_path;
 use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
 use anyhow::Context;
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::io;
 use std::path::{Path, PathBuf};
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{mpsc, oneshot};
 
 #[derive(Clone)]
 pub struct RsaHandler {
-    sender: mpsc::Sender<Message>,
+    senders: Vec<Sender<Message>>,
 }
 
 impl RsaHandler {
@@ -19,28 +21,36 @@ impl RsaHandler {
         let target_dir = target_root
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
-        // TODO spawn more actors to allow handling more than one file at a time.
         let key = Self::prepare_public_key(public_key_file)?;
-        let (sender, receiver) = mpsc::channel(1024);
-        Self::start_worker(receiver, target_dir, key);
-        Ok(Self { sender })
+        let senders = Self::create_senders(target_dir, key);
+        Ok(Self { senders })
     }
 
     pub fn decryptor(private_key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
         let target_dir = target_root
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
-        // TODO spawn more actors to allow handling more than one file at a time.
         let key = Self::prepare_private_key(private_key_file)?;
-        let (sender, receiver) = mpsc::channel(1024);
-        Self::start_worker(receiver, target_dir, key);
-        Ok(Self { sender })
+        let senders = Self::create_senders(target_dir, key);
+        Ok(Self { senders })
     }
 
     pub async fn transform(&self, path: PathBuf) -> anyhow::Result<Transformed> {
         let (snd, rcv) = oneshot::channel();
-        self.sender.send(Message { path, channel: snd }).await?;
+        let sender = self.senders.choose(&mut thread_rng()).unwrap();
+        sender.send(Message { path, channel: snd }).await?;
         rcv.await?
+    }
+
+    fn create_senders(target_dir: PathBuf, key: RsaKey) -> Vec<Sender<Message>> {
+        (0..10)
+            .into_iter()
+            .map(|_| {
+                let (sender, receiver) = mpsc::channel(1024);
+                Self::start_worker(receiver, target_dir.clone(), key.clone());
+                sender
+            })
+            .collect()
     }
 
     fn prepare_public_key(public_key_file: &Path) -> anyhow::Result<RsaKey> {
