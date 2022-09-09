@@ -1,4 +1,4 @@
-use crate::args::Command::{Backup, Decrypt, Encrypt, Verify};
+use crate::args::Command::{Decrypt, Encrypt};
 use crate::Command::GenKeys;
 use clap::Parser;
 use std::path::PathBuf;
@@ -36,20 +36,16 @@ pub(crate) fn validate_args(args: &Args) -> Result<(), String> {
                 Ok(())
             }
         }
-        Backup => Ok(()),
         Decrypt => Ok(()),
         Encrypt => Ok(()),
-        Verify => Ok(()),
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) enum Command {
     GenKeys,
-    Backup,
     Decrypt,
     Encrypt,
-    Verify,
 }
 
 impl FromStr for Command {
@@ -59,10 +55,8 @@ impl FromStr for Command {
         match s {
             "enc" => Ok(Encrypt),
             "dec" => Ok(Decrypt),
-            "bck" => Ok(Backup),
-            "vrf" => Ok(Verify),
             "keys" => Ok(GenKeys),
-            other => Err(format!("Invalid command `{}`. Must be either: `keys` to generate keys, `enc` for encryption, `dec` for decryption, `bck` for backup or `vrf` for verify", other))
+            other => Err(format!("Invalid command `{}`. Must be either: `keys` to generate keys, `enc` for encryption, `dec` for decryption", other))
         }
     }
 }

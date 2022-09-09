@@ -1,5 +1,3 @@
-extern crate core;
-
 pub mod file;
 pub mod path;
 pub mod stats;

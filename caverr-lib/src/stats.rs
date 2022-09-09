@@ -36,8 +36,8 @@ impl StatHandler {
 
 #[derive(Debug, Clone)]
 pub struct CurrentStats {
-    bytes: usize,
-    files: usize,
+    pub bytes: usize,
+    pub files: usize,
     last: PathBuf,
 }
 

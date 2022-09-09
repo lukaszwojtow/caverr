@@ -4,6 +4,7 @@ use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
 use anyhow::Context;
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
+use std::io;
 use std::path::{Path, PathBuf};
 use tokio::sync::{mpsc, oneshot};
 
@@ -42,7 +43,7 @@ impl RsaHandler {
         Ok(Self { sender })
     }
 
-    pub async fn transform(&self, path: PathBuf) -> anyhow::Result<(usize, PathBuf)> {
+    pub async fn transform(&self, path: PathBuf) -> anyhow::Result<Transformed> {
         let (snd, rcv) = oneshot::channel();
         self.sender.send(Message { path, channel: snd }).await?;
         rcv.await?
@@ -68,6 +69,12 @@ impl RsaHandler {
     }
 }
 
+#[derive(Debug)]
+pub enum Transformed {
+    Skipped,
+    Processed(usize, PathBuf),
+}
+
 async fn start_loop(mut actor: RsaWorker) {
     while let Some(msg) = actor.receiver.recv().await {
         actor.handle_message(msg).await;
@@ -83,7 +90,7 @@ struct RsaWorker {
 #[derive(Debug)]
 struct Message {
     path: PathBuf,
-    channel: oneshot::Sender<anyhow::Result<(usize, PathBuf)>>,
+    channel: oneshot::Sender<anyhow::Result<Transformed>>,
 }
 
 impl RsaWorker {
@@ -102,10 +109,24 @@ impl RsaWorker {
             .expect("Unable to send result from worker");
     }
 
-    async fn work(&self, path: &Path) -> anyhow::Result<(usize, PathBuf)> {
-        let rsa = RsaTransformer::new(self.key.clone());
-        let target_path = build_relative_path(path, &self.target_dir)?;
-        let bytes = file_transform(path, rsa, &target_path, self.key.message_len()).await?;
-        Ok((bytes, target_path))
+    async fn work(&self, source: &Path) -> anyhow::Result<Transformed> {
+        let target_path = build_relative_path(source, &self.target_dir)?;
+        if needs_work(source, &target_path).unwrap_or(true) {
+            let rsa = RsaTransformer::new(self.key.clone());
+            let bytes = file_transform(source, rsa, &target_path, self.key.message_len()).await?;
+            Ok(Transformed::Processed(bytes, target_path))
+        } else {
+            Ok(Transformed::Skipped)
+        }
+    }
+}
+
+fn needs_work(source: &Path, target: &Path) -> io::Result<bool> {
+    if !target.exists() {
+        Ok(true)
+    } else {
+        let source_time = source.metadata()?.modified()?;
+        let target_time = target.metadata()?.modified()?;
+        Ok(source_time > target_time)
     }
 }

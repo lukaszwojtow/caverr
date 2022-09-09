@@ -7,7 +7,7 @@ pub const DECRYPTION_MESSAGE_SIZE: usize = 512;
 
 #[cfg(test)]
 mod test {
-    use crate::worker::handler::RsaHandler;
+    use crate::worker::handler::{RsaHandler, Transformed};
     use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
     use std::fs;
     use std::time::Instant;
@@ -69,8 +69,12 @@ mod test {
             .expect("Unable to create encryptor");
         let result = encryptor.transform(original_file_path.clone()).await;
         assert!(result.is_ok());
-        let encrypted_path = result.unwrap().1;
-        assert!(encrypted_path.is_file());
+        let encrypted = if let Transformed::Processed(bytes, path) = result.unwrap() {
+            (bytes, path)
+        } else {
+            panic!("Result is not 'processed'");
+        };
+        assert!(encrypted.1.is_file());
         println!("Encrypted after {:?}", start.elapsed());
 
         // Decrypt file.
@@ -78,9 +82,14 @@ mod test {
         fs::create_dir_all(&decrypted_target_dir).expect("Unable to create decrypted_target_dir");
         let decryptor = RsaHandler::decryptor(&private_key_path, &decrypted_target_dir)
             .expect("Unable to create decryptor");
-        let result = decryptor.transform(encrypted_path).await;
+        let result = decryptor.transform(encrypted.1).await;
         assert!(result.is_ok());
-        let decrypted_path = result.unwrap().1;
+        let decrypted = if let Transformed::Processed(bytes, path) = result.unwrap() {
+            (bytes, path)
+        } else {
+            panic!("Result is not 'processed'");
+        };
+        let decrypted_path = decrypted.1;
         assert!(decrypted_path.is_file());
         println!("Decrypted after {:?}", start.elapsed());
 

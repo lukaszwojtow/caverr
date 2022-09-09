@@ -14,10 +14,13 @@
     variant_size_differences
 )]
 
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
+
 use crate::args::{validate_args, Args, Command};
 use crate::exit_codes::ExitCodes;
 use caverr_lib::stats::StatHandler;
-use caverr_lib::worker::handler::RsaHandler;
+use caverr_lib::worker::handler::{RsaHandler, Transformed};
 use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
 use std::fs::read_dir;
@@ -35,13 +38,25 @@ async fn main() {
         eprintln!("{e}");
         exit(ExitCodes::InvalidArgs as i32);
     }
-    match args.command {
-        Command::Backup => todo!(),
-        Command::Decrypt => decrypt(args).await,
-        Command::Encrypt => encrypt(args).await,
-        Command::Verify => todo!(),
-        Command::GenKeys => get_new_keys().await,
+    if args.command == Command::GenKeys {
+        get_new_keys().await;
+        exit(0);
     }
+    let start = std::time::Instant::now();
+    let transformer = if args.command == Command::Decrypt {
+        get_decryptor(&args.key.unwrap(), &args.target.unwrap())
+    } else {
+        get_encryptor(&args.key.unwrap(), &args.target.unwrap())
+    };
+    let stat_handler = start_stat_handler();
+    walk_dirs(args.source.unwrap(), transformer, stat_handler.clone()).await;
+    let stats = stat_handler.current().await;
+    println!(
+        "Processed {} files ({} bytes) in {} seconds.",
+        stats.files,
+        stats.bytes,
+        start.elapsed().as_secs()
+    );
 }
 
 async fn show_stats_at_signal(handler: StatHandler) {
@@ -79,18 +94,6 @@ fn start_stat_handler() -> StatHandler {
     stat_handler
 }
 
-async fn decrypt(args: Args) {
-    let stat_handler = start_stat_handler();
-    let decryptor = get_decryptor(&args.key.unwrap(), &args.target.unwrap());
-    walk_dirs(args.source.unwrap(), decryptor, stat_handler).await;
-}
-
-async fn encrypt(args: Args) {
-    let stat_handler = start_stat_handler();
-    let encryptor = get_encryptor(&args.key.unwrap(), &args.target.unwrap());
-    walk_dirs(args.source.unwrap(), encryptor, stat_handler).await;
-}
-
 async fn get_new_keys() {
     match generate_keys().await {
         Ok((private_key, public_key)) => {
@@ -119,8 +122,10 @@ async fn transform_or_queue(
 ) {
     if entry.is_file() {
         match encryptor.transform(entry).await {
-            Ok((bytes, path)) => {
-                stats.update(bytes, path).await;
+            Ok(transformed) => {
+                if let Transformed::Processed(bytes, path) = transformed {
+                    stats.update(bytes, path).await
+                }
             }
             Err(e) => eprintln!("Unable to process file: {:?}", e),
         }
