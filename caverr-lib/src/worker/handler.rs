@@ -120,7 +120,7 @@ impl RsaWorker {
 
     async fn work(&self, source: &Path) -> anyhow::Result<Transformed> {
         let target_path = build_relative_path(source, &self.target_dir)?;
-        if needs_work(source, &target_path).unwrap_or(true) {
+        if is_newer(source, &target_path).unwrap_or(true) {
             let rsa = RsaTransformer::new(self.key.clone());
             let bytes = file_transform(source, rsa, &target_path, self.key.message_len()).await?;
             Ok(Transformed::Processed(bytes, target_path))
@@ -130,12 +130,50 @@ impl RsaWorker {
     }
 }
 
-fn needs_work(source: &Path, target: &Path) -> io::Result<bool> {
+fn is_newer(source: &Path, target: &Path) -> io::Result<bool> {
     if !target.exists() {
         Ok(true)
     } else {
         let source_time = source.metadata()?.modified()?;
         let target_time = target.metadata()?.modified()?;
         Ok(source_time > target_time)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::time::Duration;
+    use tempfile::TempDir;
+    use tokio::fs::write;
+
+    #[tokio::test]
+    async fn should_check_for_newer() {
+        let tmp = TempDir::new().expect("Unable to create TempDir");
+        let first_path = tmp.path().join("first");
+        write(&first_path, vec![1; 1024])
+            .await
+            .expect("Unable to write");
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let second_path = tmp.path().join("second");
+        write(&second_path, vec![1; 1024])
+            .await
+            .expect("Unable to write");
+        let check = is_newer(&first_path, &second_path);
+        assert!(check.is_ok());
+        assert!(!check.unwrap());
+
+        let check = is_newer(&second_path, &first_path);
+        assert!(check.is_ok());
+        assert!(check.unwrap());
+
+        let does_not_exist = PathBuf::from("does").join("not").join("exist");
+        let check = is_newer(&does_not_exist, &first_path);
+        assert!(check.is_err());
+
+        let check = is_newer(&first_path, &does_not_exist);
+        assert!(check.is_ok());
+        assert!(check.unwrap());
     }
 }
