@@ -180,5 +180,4 @@ async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) 
         }
     }
     futures::future::join_all(tasks).await;
-    println!("All files processed. Exiting.");
 }

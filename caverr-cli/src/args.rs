@@ -25,19 +25,32 @@ pub(super) struct Args {
 
 pub(crate) fn validate_args(args: &Args) -> Result<(), String> {
     match args.command {
-        GenKeys => {
-            if !matches!(args.key, None) {
-                Err("Error: `key` argument given when generating keys".to_string())
-            } else if !matches!(args.source, None) {
-                Err("Error: `source` argument given when generating keys".to_string())
-            } else if !matches!(args.target, None) {
-                Err("Error: `target` argument given when generating keys".to_string())
-            } else {
-                Ok(())
-            }
-        }
-        Decrypt => Ok(()),
-        Encrypt => Ok(()),
+        GenKeys => validate_get_keys(args),
+        Decrypt | Encrypt => validate_transform(args),
+    }
+}
+
+fn validate_transform(args: &Args) -> Result<(), String> {
+    if args.key.is_none() {
+        Err("Error: `key` argument not given".into())
+    } else if args.source.is_none() {
+        Err("Error: `source` argument not given".into())
+    } else if args.target.is_none() {
+        Err("Error: `target` argument not given".into())
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_get_keys(args: &Args) -> Result<(), String> {
+    if !matches!(args.key, None) {
+        Err("Error: `key` argument given when generating keys".into())
+    } else if !matches!(args.source, None) {
+        Err("Error: `source` argument given when generating keys".into())
+    } else if !matches!(args.target, None) {
+        Err("Error: `target` argument given when generating keys".into())
+    } else {
+        Ok(())
     }
 }
 
