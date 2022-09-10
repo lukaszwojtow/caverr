@@ -85,3 +85,29 @@ impl StatWorker {
         }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::stats::StatHandler;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn should_handle_stats() {
+        let stats = StatHandler::default();
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let current = stats.current().await;
+        assert_eq!(current.bytes, 0);
+        assert_eq!(current.files, 0);
+        assert_eq!(current.last, PathBuf::from(""));
+
+        stats.update(10, PathBuf::from("1")).await;
+        stats.update(5, PathBuf::from("2")).await;
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let current = stats.current().await;
+        assert_eq!(current.bytes, 15);
+        assert_eq!(current.files, 2);
+        assert_eq!(current.last, PathBuf::from("2"));
+    }
+}
