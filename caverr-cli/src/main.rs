@@ -129,6 +129,7 @@ async fn transform_or_queue(
         tasks.push(task);
     } else if entry.is_dir() {
         queue.push(entry);
+        stats.inc_queue_size().await;
     }
 }
 
@@ -154,6 +155,7 @@ async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) 
     let mut tasks = Vec::with_capacity(1024);
     transform_or_queue(entry, &mut queue, &transformer, &stats, &mut tasks).await;
     while let Some(path) = queue.pop() {
+        stats.dec_queue_size().await;
         match read_dir(&path) {
             Ok(dir) => {
                 for file in dir {
