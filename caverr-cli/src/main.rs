@@ -26,7 +26,9 @@ use clap::Parser;
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::process::exit;
+use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 mod args;
@@ -139,13 +141,14 @@ fn spawn_transforming_task(
     stats: StatHandler,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        match transformer.transform(entry).await {
+        let path = Arc::new(Mutex::new(entry));
+        match transformer.transform(path.clone()).await {
             Ok(transformed) => {
                 if let Transformed::Processed(bytes, path) = transformed {
                     stats.update(bytes, path).await
                 }
             }
-            Err(e) => eprintln!("Unable to process file: {:?}", e),
+            Err(e) => eprintln!("Unable to process file {:?}: {:?}", path.lock().await, e),
         }
     })
 }

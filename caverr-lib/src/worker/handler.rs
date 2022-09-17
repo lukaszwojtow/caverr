@@ -8,8 +8,9 @@ use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 #[derive(Clone)]
 pub struct RsaHandler {
@@ -35,7 +36,7 @@ impl RsaHandler {
         Ok(Self { senders })
     }
 
-    pub async fn transform(&self, path: PathBuf) -> anyhow::Result<Transformed> {
+    pub async fn transform(&self, path: Arc<Mutex<PathBuf>>) -> anyhow::Result<Transformed> {
         let (snd, rcv) = oneshot::channel();
         let sender = self.senders.choose(&mut thread_rng()).unwrap();
         sender.send(Message { path, channel: snd }).await?;
@@ -98,7 +99,7 @@ struct RsaWorker {
 
 #[derive(Debug)]
 struct Message {
-    path: PathBuf,
+    path: Arc<Mutex<PathBuf>>,
     channel: oneshot::Sender<anyhow::Result<Transformed>>,
 }
 
@@ -112,7 +113,8 @@ impl RsaWorker {
     }
 
     async fn handle_message(&mut self, msg: Message) {
-        let result = self.work(&msg.path).await;
+        let path = msg.path.lock().await;
+        let result = self.work(&path).await;
         msg.channel
             .send(result)
             .expect("Unable to send result from worker");

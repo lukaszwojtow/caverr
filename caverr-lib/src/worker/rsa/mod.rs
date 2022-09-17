@@ -10,9 +10,11 @@ mod test {
     use crate::worker::handler::{RsaHandler, Transformed};
     use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
     use std::fs;
+    use std::sync::Arc;
     use std::time::Instant;
     use tokio::fs::File;
     use tokio::io::AsyncWriteExt;
+    use tokio::sync::Mutex;
 
     const ORIGIN_CONTENT_LEN: usize = 16 * 1024;
 
@@ -67,7 +69,8 @@ mod test {
         fs::create_dir_all(&target_dir).expect("Unable to create target_dir");
         let encryptor = RsaHandler::encryptor(&public_key_path, &target_dir)
             .expect("Unable to create encryptor");
-        let result = encryptor.transform(original_file_path.clone()).await;
+        let arc_original_file_path = Arc::new(Mutex::new(original_file_path.clone()));
+        let result = encryptor.transform(arc_original_file_path).await;
         assert!(result.is_ok());
         let encrypted = if let Transformed::Processed(bytes, path) = result.unwrap() {
             (bytes, path)
@@ -82,7 +85,7 @@ mod test {
         fs::create_dir_all(&decrypted_target_dir).expect("Unable to create decrypted_target_dir");
         let decryptor = RsaHandler::decryptor(&private_key_path, &decrypted_target_dir)
             .expect("Unable to create decryptor");
-        let result = decryptor.transform(encrypted.1).await;
+        let result = decryptor.transform(Arc::new(Mutex::new(encrypted.1))).await;
         assert!(result.is_ok());
         let decrypted = if let Transformed::Processed(bytes, path) = result.unwrap() {
             (bytes, path)
