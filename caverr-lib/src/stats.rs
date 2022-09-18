@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 
 #[derive(Clone)]
 pub struct StatHandler {
@@ -50,6 +51,7 @@ impl StatHandler {
 #[derive(Debug, Clone)]
 pub struct CurrentStats {
     pub bytes: usize,
+    pub bytes_per_second: f32,
     pub files: usize,
     pub queue_len: usize,
     last: PathBuf,
@@ -64,6 +66,7 @@ async fn start_loop(mut actor: StatWorker) {
 struct StatWorker {
     receiver: mpsc::Receiver<StatMessage>,
     stats: CurrentStats,
+    start: Instant,
 }
 
 #[derive(Debug)]
@@ -77,8 +80,10 @@ enum StatMessage {
 impl StatWorker {
     fn new(receiver: mpsc::Receiver<StatMessage>) -> Self {
         StatWorker {
+            start: Instant::now(),
             receiver,
             stats: CurrentStats {
+                bytes_per_second: 0.0,
                 bytes: 0,
                 files: 0,
                 queue_len: 0,
@@ -95,6 +100,8 @@ impl StatWorker {
                 self.stats.last = file;
             }
             StatMessage::Request(channel) => {
+                let seconds = self.start.elapsed().as_secs_f32();
+                self.stats.bytes_per_second = (self.stats.bytes as f32) / seconds;
                 channel
                     .send(self.stats.clone())
                     .expect("Unable to send message to channel");
