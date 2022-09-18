@@ -124,6 +124,9 @@ async fn transform_or_queue(
     stats: &StatHandler,
     tasks: &mut Vec<JoinHandle<()>>,
 ) {
+    if entry.is_symlink() {
+        return;
+    }
     if entry.is_file() {
         let transformer = transformer.clone();
         let stats = stats.clone();
