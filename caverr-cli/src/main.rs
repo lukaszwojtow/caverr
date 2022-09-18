@@ -36,6 +36,7 @@ mod exit_codes;
 
 #[tokio::main]
 async fn main() {
+    console_subscriber::init();
     let args = Args::parse();
     if let Err(e) = validate_args(&args) {
         eprintln!("{e}");

@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 caverr-lib = {path = "../caverr-lib"}
+console-subscriber = "0.1"
 clap = {version = "3.2", features = ["derive"]}
 futures = "0.3"
 tokio = {version = "1.20", features = ["full"]}
