@@ -17,176 +17,51 @@
 #[global_allocator]
 static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
-use crate::args::{validate_args, Args, Command};
-use crate::exit_codes::ExitCodes;
-use caverr_lib::stats::StatHandler;
-use caverr_lib::worker::handler::{RsaHandler, Transformed};
-use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
-use clap::Parser;
-use std::fs::read_dir;
-use std::path::{Path, PathBuf};
-use std::process::exit;
-use std::sync::Arc;
-use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use caverr_lib::worker::handler::RsaHandler;
+use lazy_static::lazy_static;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 
-mod args;
-mod exit_codes;
+lazy_static! {
+    static ref RUNNING: AtomicUsize = AtomicUsize::new(0);
+}
 
 #[tokio::main]
 async fn main() {
     console_subscriber::init();
-    let args = Args::parse();
-    if let Err(e) = validate_args(&args) {
-        eprintln!("{e}");
-        exit(ExitCodes::InvalidArgs as i32);
-    }
-    if args.command == Command::GenKeys {
-        get_new_keys().await;
-        exit(0);
-    }
-    let start = std::time::Instant::now();
-    let transformer = if args.command == Command::Decrypt {
-        get_decryptor(&args.key.unwrap(), &args.target.unwrap())
-    } else {
-        get_encryptor(&args.key.unwrap(), &args.target.unwrap())
-    };
-    let stat_handler = start_stat_handler();
-    walk_dirs(args.source.unwrap(), transformer, stat_handler.clone()).await;
-    let stats = stat_handler.current().await;
-    println!(
-        "Processed {} files ({} bytes) in {} seconds.",
-        stats.files,
-        stats.bytes,
-        start.elapsed().as_secs()
-    );
+    start(RsaHandler::encryptor()).await;
 }
 
-async fn show_stats_at_signal(handler: StatHandler) {
-    let mut signals = signal(SignalKind::hangup()).expect("Unable to register signal handler");
+async fn check_spawn(entry: PathBuf, transformer: &RsaHandler) {
+    let mut sleep = 1;
     loop {
-        signals.recv().await;
-        let stats = handler.current().await;
-        println!("{:?}", stats);
-    }
-}
-
-fn get_decryptor(key: &Path, target: &Path) -> RsaHandler {
-    match RsaHandler::decryptor(key, target) {
-        Ok(decryptor) => decryptor,
-        Err(e) => {
-            eprintln!("Unable to create decryptor: {:?}", e);
-            exit(ExitCodes::EncryptorError as i32)
+        let running = RUNNING.load(Ordering::SeqCst);
+        if running > 1024 {
+            println!("sleeping for {}s", sleep);
+            tokio::time::sleep(Duration::from_secs(sleep)).await;
+            sleep *= 2;
+        } else {
+            break;
         }
     }
+    let transformer = transformer.clone();
+    spawn_transforming_task(entry, transformer);
 }
 
-fn get_encryptor(key: &Path, target: &Path) -> RsaHandler {
-    match RsaHandler::encryptor(key, target) {
-        Ok(decryptor) => decryptor,
-        Err(e) => {
-            eprintln!("Unable to create encryptor: {:?}", e);
-            exit(ExitCodes::EncryptorError as i32)
-        }
-    }
-}
-
-fn start_stat_handler() -> StatHandler {
-    let stat_handler = StatHandler::default();
-    tokio::spawn(show_stats_at_signal(stat_handler.clone()));
-    stat_handler
-}
-
-async fn get_new_keys() {
-    match generate_keys().await {
-        Ok((private_key, public_key)) => {
-            if let Err(e) = write_public_key(&mut tokio::io::stdout(), public_key).await {
-                eprintln!("Unable to write public key: {:?}", e);
-                exit(ExitCodes::UnableToWriteKeys as i32);
-            }
-            if let Err(e) = write_private_key(&mut tokio::io::stdout(), private_key).await {
-                eprintln!("Unable to write private key: {:?}", e);
-                exit(ExitCodes::UnableToWriteKeys as i32);
-            }
-        }
-
-        Err(e) => {
-            eprintln!("Unable to generate keys: {:?}", e);
-            exit(ExitCodes::KeyGenerationError as i32);
-        }
-    }
-}
-
-async fn transform_or_queue(
-    entry: PathBuf,
-    queue: &mut Vec<PathBuf>,
-    transformer: &RsaHandler,
-    stats: &StatHandler,
-    tasks: &mut Vec<JoinHandle<()>>,
-) {
-    if entry.is_symlink() {
-        return;
-    }
-    if entry.is_file() {
-        let transformer = transformer.clone();
-        let stats = stats.clone();
-        let task = spawn_transforming_task(entry, transformer, stats);
-        tasks.push(task);
-    } else if entry.is_dir() {
-        queue.push(entry);
-        stats.inc_queue_size().await;
-    }
-}
-
-fn spawn_transforming_task(
-    entry: PathBuf,
-    transformer: RsaHandler,
-    stats: StatHandler,
-) -> JoinHandle<()> {
+fn spawn_transforming_task(entry: PathBuf, transformer: RsaHandler) {
+    RUNNING.fetch_add(1, Ordering::SeqCst);
     tokio::spawn(async move {
-        let path = Arc::new(Mutex::new(entry));
-        match transformer.transform(path.clone()).await {
-            Ok(transformed) => {
-                if let Transformed::Processed(bytes, path) = transformed {
-                    stats.update(bytes, path).await
-                }
-            }
-            Err(e) => eprintln!("Unable to process file {:?}: {:?}", path.lock().await, e),
-        }
-    })
+        transformer.transform(entry).await;
+        RUNNING.fetch_sub(1, Ordering::SeqCst);
+    });
 }
 
-async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
-    let mut queue = Vec::with_capacity(1024);
-    let mut tasks = Vec::with_capacity(1024);
-    transform_or_queue(entry, &mut queue, &transformer, &stats, &mut tasks).await;
-    while let Some(path) = queue.pop() {
-        stats.dec_queue_size().await;
-        match read_dir(&path) {
-            Ok(dir) => {
-                for file in dir {
-                    match file {
-                        Ok(f) => {
-                            transform_or_queue(
-                                f.path(),
-                                &mut queue,
-                                &transformer,
-                                &stats,
-                                &mut tasks,
-                            )
-                            .await
-                        }
-                        Err(ref e) => {
-                            eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Unable to scan directory: {:?}: {}", path, e)
-            }
+async fn start(transformer: RsaHandler) {
+    for i in 0..1_000_000 {
+        check_spawn(PathBuf::from("/tmp/fff"), &transformer).await;
+        if i % 100 == 0 {
+            println!("i: {}", i);
         }
     }
-    futures::future::join_all(tasks).await;
 }
