@@ -2,8 +2,6 @@ use crate::file::file_transform;
 use crate::path::build_relative_path;
 use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
 use anyhow::Context;
-use rand::seq::SliceRandom;
-use rand::thread_rng;
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::io;
@@ -38,11 +36,22 @@ impl RsaHandler {
 
     pub async fn transform(&self, path: Arc<Mutex<PathBuf>>) -> anyhow::Result<Transformed> {
         let (snd, rcv) = oneshot::channel();
-        let sender = self.senders.choose(&mut thread_rng()).unwrap();
+        let sender = self.pick_sender();
         sender.send(Message { path, channel: snd }).await?;
         rcv.await?
     }
 
+    fn pick_sender(&self) -> &Sender<Message> {
+        let mut hpv = self.senders[0].capacity();
+        let mut hpi = 0;
+        for i in 1..self.senders.len() {
+            if self.senders[i].capacity() > hpv {
+                hpv = self.senders[i].capacity();
+                hpi = i;
+            }
+        }
+        &self.senders[hpi]
+    }
     fn create_senders(target_dir: PathBuf, key: RsaKey) -> Vec<Sender<Message>> {
         (0..10)
             .into_iter()

@@ -27,16 +27,15 @@ use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 mod args;
 mod exit_codes;
 
 #[tokio::main]
 async fn main() {
-    console_subscriber::init();
     let args = Args::parse();
     if let Err(e) = validate_args(&args) {
         eprintln!("{e}");
@@ -123,7 +122,6 @@ async fn transform_or_queue(
     queue: &mut Vec<PathBuf>,
     transformer: &RsaHandler,
     stats: &StatHandler,
-    tasks: &mut Vec<JoinHandle<()>>,
 ) {
     if entry.is_symlink() {
         return;
@@ -131,19 +129,15 @@ async fn transform_or_queue(
     if entry.is_file() {
         let transformer = transformer.clone();
         let stats = stats.clone();
-        let task = spawn_transforming_task(entry, transformer, stats);
-        tasks.push(task);
+        spawn_transforming_task(entry, transformer, stats).await;
     } else if entry.is_dir() {
         queue.push(entry);
         stats.inc_queue_size().await;
     }
 }
 
-fn spawn_transforming_task(
-    entry: PathBuf,
-    transformer: RsaHandler,
-    stats: StatHandler,
-) -> JoinHandle<()> {
+async fn spawn_transforming_task(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
+    stats.inc_queue_size().await;
     tokio::spawn(async move {
         let path = Arc::new(Mutex::new(entry));
         match transformer.transform(path.clone()).await {
@@ -154,13 +148,13 @@ fn spawn_transforming_task(
             }
             Err(e) => eprintln!("Unable to process file {:?}: {:?}", path.lock().await, e),
         }
-    })
+        stats.dec_queue_size().await;
+    });
 }
 
 async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
     let mut queue = Vec::with_capacity(1024);
-    let mut tasks = Vec::with_capacity(1024);
-    transform_or_queue(entry, &mut queue, &transformer, &stats, &mut tasks).await;
+    transform_or_queue(entry, &mut queue, &transformer, &stats).await;
     while let Some(path) = queue.pop() {
         stats.dec_queue_size().await;
         match read_dir(&path) {
@@ -168,14 +162,7 @@ async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) 
                 for file in dir {
                     match file {
                         Ok(f) => {
-                            transform_or_queue(
-                                f.path(),
-                                &mut queue,
-                                &transformer,
-                                &stats,
-                                &mut tasks,
-                            )
-                            .await
+                            transform_or_queue(f.path(), &mut queue, &transformer, &stats).await
                         }
                         Err(ref e) => {
                             eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
@@ -188,5 +175,17 @@ async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) 
             }
         }
     }
-    futures::future::join_all(tasks).await;
+    wait_for_tasks(stats).await;
+}
+
+async fn wait_for_tasks(stats: StatHandler) {
+    loop {
+        let count = stats.current().await.running_count;
+        if count > 0 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            println!("Waiting for tasks to finish, remaining: {}", count);
+        } else {
+            break;
+        }
+    }
 }

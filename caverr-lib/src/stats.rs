@@ -19,13 +19,13 @@ impl Default for StatHandler {
 impl StatHandler {
     pub async fn inc_queue_size(&self) {
         self.sender
-            .send(StatMessage::IncQueue)
+            .send(StatMessage::IncRunning)
             .await
             .expect("Unable to send inc_queue_size");
     }
     pub async fn dec_queue_size(&self) {
         self.sender
-            .send(StatMessage::DecQueue)
+            .send(StatMessage::DecRunning)
             .await
             .expect("Unable to send dec_queue_size");
     }
@@ -53,7 +53,7 @@ pub struct CurrentStats {
     pub bytes: usize,
     pub bytes_per_second: f32,
     pub files: usize,
-    pub queue_len: usize,
+    pub running_count: usize,
     last: PathBuf,
 }
 
@@ -73,8 +73,8 @@ struct StatWorker {
 enum StatMessage {
     Update(usize, PathBuf),
     Request(oneshot::Sender<CurrentStats>),
-    IncQueue,
-    DecQueue,
+    IncRunning,
+    DecRunning,
 }
 
 impl StatWorker {
@@ -86,7 +86,7 @@ impl StatWorker {
                 bytes_per_second: 0.0,
                 bytes: 0,
                 files: 0,
-                queue_len: 0,
+                running_count: 0,
                 last: Default::default(),
             },
         }
@@ -106,8 +106,8 @@ impl StatWorker {
                     .send(self.stats.clone())
                     .expect("Unable to send message to channel");
             }
-            StatMessage::IncQueue => self.stats.queue_len += 1,
-            StatMessage::DecQueue => self.stats.queue_len -= 1,
+            StatMessage::IncRunning => self.stats.running_count += 1,
+            StatMessage::DecRunning => self.stats.running_count -= 1,
         }
     }
 }
