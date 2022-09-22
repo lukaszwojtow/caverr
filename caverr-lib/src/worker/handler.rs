@@ -11,7 +11,7 @@ use std::{io, thread};
 
 #[derive(Clone)]
 pub struct RsaHandler {
-    senders: Vec<Sender<Message>>,
+    sender: Sender<Message>,
 }
 
 impl RsaHandler {
@@ -20,8 +20,9 @@ impl RsaHandler {
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         let key = Self::prepare_public_key(public_key_file)?;
-        let senders = Self::create_senders(target_dir, key);
-        Ok(Self { senders })
+        let (sender, receiver) = crossbeam::channel::bounded(1024);
+        Self::start_worker(receiver, target_dir, key);
+        Ok(Self { sender })
     }
 
     pub fn decryptor(private_key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
@@ -29,37 +30,15 @@ impl RsaHandler {
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         let key = Self::prepare_private_key(private_key_file)?;
-        let senders = Self::create_senders(target_dir, key);
-        Ok(Self { senders })
+        let (sender, receiver) = crossbeam::channel::bounded(1024);
+        Self::start_worker(receiver, target_dir, key);
+        Ok(Self { sender })
     }
 
     pub fn transform(&self, path: Arc<Mutex<PathBuf>>) -> anyhow::Result<Transformed> {
         let (snd, rcv) = crossbeam::channel::bounded(1);
-        let sender = self.pick_sender();
-        sender.send(Message { path, channel: snd })?;
+        self.sender.send(Message { path, channel: snd })?;
         rcv.recv()?
-    }
-
-    fn pick_sender(&self) -> &Sender<Message> {
-        let mut hpv = self.senders[0].capacity();
-        let mut hpi = 0;
-        for i in 1..self.senders.len() {
-            if self.senders[i].capacity() > hpv {
-                hpv = self.senders[i].capacity();
-                hpi = i;
-            }
-        }
-        &self.senders[hpi]
-    }
-    fn create_senders(target_dir: PathBuf, key: RsaKey) -> Vec<Sender<Message>> {
-        (0..10)
-            .into_iter()
-            .map(|_| {
-                let (sender, receiver) = crossbeam::channel::bounded(1024);
-                Self::start_worker(receiver, target_dir.clone(), key.clone());
-                sender
-            })
-            .collect()
     }
 
     fn prepare_public_key(public_key_file: &Path) -> anyhow::Result<RsaKey> {
