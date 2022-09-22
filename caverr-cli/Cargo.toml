@@ -8,9 +8,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 caverr-lib = {path = "../caverr-lib"}
 clap = {version = "3.2", features = ["derive"]}
+crossbeam = "0.8"
 jemallocator = "0.5"
-tokio = {version = "1.20", features = ["full"]}
-
+rayon = "1.5"
+signal-hook = "0.3"
 
 [dev-dependencies]
 rusty-hook = "0.11"

@@ -23,36 +23,45 @@ use caverr_lib::stats::StatHandler;
 use caverr_lib::worker::handler::{RsaHandler, Transformed};
 use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
+use crossbeam::channel::Receiver;
+use rayon::ThreadPoolBuilder;
 use std::fs::read_dir;
+use std::io::stdout;
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tokio::signal::unix::{signal, SignalKind};
+use std::thread;
+use std::thread::JoinHandle;
 
 mod args;
 mod exit_codes;
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let args = Args::parse();
     if let Err(e) = validate_args(&args) {
         eprintln!("{e}");
         exit(ExitCodes::InvalidArgs as i32);
     }
     if args.command == Command::GenKeys {
-        get_new_keys().await;
+        get_new_keys();
         exit(0);
     }
     let start = std::time::Instant::now();
-    let transformer = if args.command == Command::Decrypt {
-        get_decryptor(&args.key.unwrap(), &args.target.unwrap())
-    } else {
-        get_encryptor(&args.key.unwrap(), &args.target.unwrap())
-    };
     let stat_handler = start_stat_handler();
-    walk_dirs(args.source.unwrap(), transformer, stat_handler.clone()).await;
-    let stats = stat_handler.current().await;
+    let producer = if args.command == Command::Decrypt {
+        get_decryptor
+    } else {
+        get_encryptor
+    };
+
+    walk_dir(
+        args.source.unwrap(),
+        args.key.unwrap(),
+        args.target.unwrap(),
+        producer,
+        stat_handler.clone(),
+    );
+    let stats = stat_handler.current();
     println!(
         "Processed {} files ({} bytes) in {} seconds.",
         stats.files,
@@ -61,13 +70,17 @@ async fn main() {
     );
 }
 
-async fn show_stats_at_signal(handler: StatHandler) {
-    let mut signals = signal(SignalKind::hangup()).expect("Unable to register signal handler");
-    loop {
-        signals.recv().await;
-        let stats = handler.current().await;
-        println!("{:?}", stats);
-    }
+fn show_stats_at_signal(handler: StatHandler) {
+    use signal_hook::consts::SIGHUP;
+    use signal_hook::iterator::Signals;
+
+    let signals = Signals::new(&[SIGHUP]);
+    thread::spawn(move || {
+        for _ in signals.expect("Unable to register signals").forever() {
+            let stats = handler.current();
+            println!("{:?}", stats);
+        }
+    });
 }
 
 fn get_decryptor(key: &Path, target: &Path) -> RsaHandler {
@@ -92,18 +105,18 @@ fn get_encryptor(key: &Path, target: &Path) -> RsaHandler {
 
 fn start_stat_handler() -> StatHandler {
     let stat_handler = StatHandler::default();
-    tokio::spawn(show_stats_at_signal(stat_handler.clone()));
+    show_stats_at_signal(stat_handler.clone());
     stat_handler
 }
 
-async fn get_new_keys() {
-    match generate_keys().await {
+fn get_new_keys() {
+    match generate_keys() {
         Ok((private_key, public_key)) => {
-            if let Err(e) = write_public_key(&mut tokio::io::stdout(), public_key).await {
+            if let Err(e) = write_public_key(&mut stdout(), public_key) {
                 eprintln!("Unable to write public key: {:?}", e);
                 exit(ExitCodes::UnableToWriteKeys as i32);
             }
-            if let Err(e) = write_private_key(&mut tokio::io::stdout(), private_key).await {
+            if let Err(e) = write_private_key(&mut stdout(), private_key) {
                 eprintln!("Unable to write private key: {:?}", e);
                 exit(ExitCodes::UnableToWriteKeys as i32);
             }
@@ -116,53 +129,41 @@ async fn get_new_keys() {
     }
 }
 
-async fn transform_or_queue(
+fn transform_or_queue(
     entry: PathBuf,
+    path_sender: &mut crossbeam::channel::Sender<PathBuf>,
     queue: &mut Vec<PathBuf>,
-    transformer: &RsaHandler,
     stats: &StatHandler,
 ) {
     if entry.is_symlink() {
         return;
     }
     if entry.is_file() {
-        let transformer = transformer.clone();
-        let stats = stats.clone();
-        spawn_transforming_task(entry, transformer, stats).await;
+        stats.increment_count();
+        path_sender.send(entry).expect("unable to send path");
     } else if entry.is_dir() {
         queue.push(entry);
-        stats.inc_queue_size().await;
     }
 }
 
-async fn spawn_transforming_task(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
-    stats.inc_queue_size().await;
-    tokio::spawn(async move {
-        let path = Arc::new(Mutex::new(entry));
-        match transformer.transform(path.clone()) {
-            Ok(transformed) => {
-                if let Transformed::Processed(bytes, path) = transformed {
-                    stats.update(bytes, path).await
-                }
-            }
-            Err(e) => eprintln!("Unable to process file {:?}: {:?}", path.lock().unwrap(), e),
-        }
-        stats.dec_queue_size().await;
-    });
-}
-
-async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) {
+fn walk_dir(
+    source: PathBuf,
+    key: PathBuf,
+    target: PathBuf,
+    producer: fn(&Path, &Path) -> RsaHandler,
+    stats: StatHandler,
+) {
+    let (mut path_sender, path_receiver) = crossbeam::channel::bounded(1024);
+    let path_reading_thread =
+        spawn_path_reading(key, target, producer, path_receiver, stats.clone());
     let mut queue = Vec::with_capacity(1024);
-    transform_or_queue(entry, &mut queue, &transformer, &stats).await;
+    transform_or_queue(source, &mut path_sender, &mut queue, &stats);
     while let Some(path) = queue.pop() {
-        stats.dec_queue_size().await;
         match read_dir(&path) {
             Ok(dir) => {
                 for file in dir {
                     match file {
-                        Ok(f) => {
-                            transform_or_queue(f.path(), &mut queue, &transformer, &stats).await
-                        }
+                        Ok(f) => transform_or_queue(f.path(), &mut path_sender, &mut queue, &stats),
                         Err(ref e) => {
                             eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
                         }
@@ -174,17 +175,45 @@ async fn walk_dirs(entry: PathBuf, transformer: RsaHandler, stats: StatHandler) 
             }
         }
     }
-    wait_for_tasks(stats).await;
+    drop(path_sender);
+    path_reading_thread
+        .join()
+        .expect("unable to join main thread");
 }
 
-async fn wait_for_tasks(stats: StatHandler) {
-    loop {
-        let count = stats.current().await.running_count;
-        if count > 0 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            println!("Waiting for tasks to finish, remaining: {}", count);
-        } else {
-            break;
-        }
-    }
+fn spawn_path_reading(
+    key: PathBuf,
+    target: PathBuf,
+    producer: fn(&Path, &Path) -> RsaHandler,
+    path_receiver: Receiver<PathBuf>,
+    thread_stats: StatHandler,
+) -> JoinHandle<()> {
+    thread::spawn(move || {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(12)
+            .build()
+            .expect("cannot create a thread pool");
+
+        pool.scope(|scope| {
+            while let Ok(path) = path_receiver.recv() {
+                scope.spawn(|_| {
+                    let transformer = producer(&key, &target);
+                    let path = Arc::new(Mutex::new(path)); // TODO remove arc
+                    match transformer.transform(path.clone()) {
+                        Ok(transformed) => {
+                            thread_stats.decrement_count();
+                            if let Transformed::Processed(bytes, path) = transformed {
+                                let count = thread_stats.current().counter;
+                                println!("Remaining: {} Last {:?}", count, path);
+                                thread_stats.update(bytes, path);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Unable to process file {:?}: {:?}", path.lock().unwrap(), e)
+                        }
+                    }
+                })
+            }
+        });
+    })
 }

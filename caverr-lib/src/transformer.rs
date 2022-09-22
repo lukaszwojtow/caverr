@@ -5,6 +5,7 @@ use std::{io, thread};
 
 /// Reads target in chunks, transforms it using [Transformer::update], and writes to target.
 /// Returns total bytes written or error.
+// TODO change to use buffered IO
 pub fn transform<R: Read + Send + 'static, W: Write + Unpin>(
     source: R,
     transformer: impl Transformer,

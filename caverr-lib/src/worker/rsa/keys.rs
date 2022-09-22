@@ -4,10 +4,10 @@ use rsa::pkcs8::LineEnding::CRLF;
 use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use std::io;
+use std::io::Write;
 use thiserror::Error;
-use tokio::io::{AsyncWrite, AsyncWriteExt};
 
-pub async fn generate_keys() -> rsa::errors::Result<(RsaPrivateKey, RsaPublicKey)> {
+pub fn generate_keys() -> rsa::errors::Result<(RsaPrivateKey, RsaPublicKey)> {
     let mut rng = thread_rng();
     let bits = KEY_BITS;
     let private_key = RsaPrivateKey::new(&mut rng, bits)?;
@@ -24,20 +24,16 @@ pub enum ShowKeyError {
     IOError(io::Error),
 }
 
-pub async fn write_public_key<W: AsyncWrite + Unpin>(
-    w: &mut W,
-    public_key: RsaPublicKey,
-) -> Result<(), ShowKeyError> {
+pub fn write_public_key<W: Write>(w: &mut W, public_key: RsaPublicKey) -> Result<(), ShowKeyError> {
     let public_key_string = public_key
         .to_public_key_pem(CRLF)
         .map_err(|e| ShowKeyError::RsaError(rsa::pkcs8::Error::PublicKey(e)))?;
     w.write_all(public_key_string.as_bytes())
-        .await
         .map_err(ShowKeyError::IOError)?;
     Ok(())
 }
 
-pub async fn write_private_key<W: AsyncWrite + Unpin>(
+pub fn write_private_key<W: Write>(
     w: &mut W,
     private_key: RsaPrivateKey,
 ) -> Result<(), ShowKeyError> {
@@ -45,7 +41,6 @@ pub async fn write_private_key<W: AsyncWrite + Unpin>(
         .to_pkcs8_pem(CRLF)
         .map_err(ShowKeyError::RsaError)?;
     w.write_all(private_key_string.as_bytes())
-        .await
         .map_err(ShowKeyError::IOError)?;
     Ok(())
 }
