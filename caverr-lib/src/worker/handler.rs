@@ -2,13 +2,12 @@ use crate::file::file_transform;
 use crate::path::build_relative_path;
 use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
 use anyhow::Context;
+use crossbeam::channel::{Receiver, Sender};
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
-use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use std::sync::{Arc, Mutex};
+use std::{io, thread};
 
 #[derive(Clone)]
 pub struct RsaHandler {
@@ -34,11 +33,11 @@ impl RsaHandler {
         Ok(Self { senders })
     }
 
-    pub async fn transform(&self, path: Arc<Mutex<PathBuf>>) -> anyhow::Result<Transformed> {
-        let (snd, rcv) = oneshot::channel();
+    pub fn transform(&self, path: Arc<Mutex<PathBuf>>) -> anyhow::Result<Transformed> {
+        let (snd, rcv) = crossbeam::channel::bounded(1);
         let sender = self.pick_sender();
-        sender.send(Message { path, channel: snd }).await?;
-        rcv.await?
+        sender.send(Message { path, channel: snd })?;
+        rcv.recv()?
     }
 
     fn pick_sender(&self) -> &Sender<Message> {
@@ -56,7 +55,7 @@ impl RsaHandler {
         (0..10)
             .into_iter()
             .map(|_| {
-                let (sender, receiver) = mpsc::channel(1024);
+                let (sender, receiver) = crossbeam::channel::bounded(1024);
                 Self::start_worker(receiver, target_dir.clone(), key.clone());
                 sender
             })
@@ -84,7 +83,9 @@ impl RsaHandler {
 
     fn start_worker(receiver: Receiver<Message>, target_dir: PathBuf, key: RsaKey) {
         let worker = RsaWorker::new(target_dir, key, receiver);
-        tokio::spawn(start_loop(worker));
+        thread::spawn(|| {
+            start_loop(worker);
+        });
     }
 }
 
@@ -94,9 +95,9 @@ pub enum Transformed {
     Processed(usize, PathBuf),
 }
 
-async fn start_loop(mut actor: RsaWorker) {
-    while let Some(msg) = actor.receiver.recv().await {
-        actor.handle_message(msg).await;
+fn start_loop(mut actor: RsaWorker) {
+    while let Ok(msg) = actor.receiver.recv() {
+        actor.handle_message(msg);
     }
 }
 
@@ -109,7 +110,7 @@ struct RsaWorker {
 #[derive(Debug)]
 struct Message {
     path: Arc<Mutex<PathBuf>>,
-    channel: oneshot::Sender<anyhow::Result<Transformed>>,
+    channel: Sender<anyhow::Result<Transformed>>,
 }
 
 impl RsaWorker {
@@ -121,19 +122,19 @@ impl RsaWorker {
         }
     }
 
-    async fn handle_message(&mut self, msg: Message) {
-        let path = msg.path.lock().await;
-        let result = self.work(&path).await;
+    fn handle_message(&mut self, msg: Message) {
+        let path = msg.path.lock().unwrap(); //TODO
+        let result = self.work(&path);
         msg.channel
             .send(result)
             .expect("Unable to send result from worker");
     }
 
-    async fn work(&self, source: &Path) -> anyhow::Result<Transformed> {
+    fn work(&self, source: &Path) -> anyhow::Result<Transformed> {
         let target_path = build_relative_path(source, &self.target_dir)?;
         if is_newer(source, &target_path).unwrap_or(true) {
             let rsa = RsaTransformer::new(self.key.clone());
-            let bytes = file_transform(source, rsa, &target_path, self.key.message_len()).await?;
+            let bytes = file_transform(source, rsa, &target_path, self.key.message_len())?;
             Ok(Transformed::Processed(bytes, target_path))
         } else {
             Ok(Transformed::Skipped)

@@ -26,10 +26,9 @@ use clap::Parser;
 use std::fs::read_dir;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::Mutex;
 
 mod args;
 mod exit_codes;
@@ -140,13 +139,13 @@ async fn spawn_transforming_task(entry: PathBuf, transformer: RsaHandler, stats:
     stats.inc_queue_size().await;
     tokio::spawn(async move {
         let path = Arc::new(Mutex::new(entry));
-        match transformer.transform(path.clone()).await {
+        match transformer.transform(path.clone()) {
             Ok(transformed) => {
                 if let Transformed::Processed(bytes, path) = transformed {
                     stats.update(bytes, path).await
                 }
             }
-            Err(e) => eprintln!("Unable to process file {:?}: {:?}", path.lock().await, e),
+            Err(e) => eprintln!("Unable to process file {:?}: {:?}", path.lock().unwrap(), e),
         }
         stats.dec_queue_size().await;
     });
