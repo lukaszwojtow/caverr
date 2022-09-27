@@ -20,18 +20,16 @@ static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;
 use crate::args::{validate_args, Args, Command};
 use crate::exit_codes::ExitCodes;
 use caverr_lib::stats::StatHandler;
-use caverr_lib::worker::handler::{RsaHandler, Transformed};
+use caverr_lib::worker::rsa::handler::{RsaHandler, Transformed};
 use caverr_lib::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
 use clap::Parser;
-use crossbeam::channel::Receiver;
-use rayon::ThreadPoolBuilder;
+use rayon::iter::IntoParallelIterator;
+use rayon::iter::ParallelIterator;
 use std::fs::read_dir;
 use std::io::stdout;
 use std::path::{Path, PathBuf};
 use std::process::exit;
-use std::sync::{Arc, Mutex};
 use std::thread;
-use std::thread::JoinHandle;
 
 mod args;
 mod exit_codes;
@@ -49,18 +47,12 @@ fn main() {
     let start = std::time::Instant::now();
     let stat_handler = start_stat_handler();
     let producer = if args.command == Command::Decrypt {
-        get_decryptor
+        get_decryptor(&args.key.unwrap(), &args.target.unwrap())
     } else {
-        get_encryptor
+        get_encryptor(&args.key.unwrap(), &args.target.unwrap())
     };
 
-    walk_dir(
-        args.source.unwrap(),
-        args.key.unwrap(),
-        args.target.unwrap(),
-        producer,
-        stat_handler.clone(),
-    );
+    walk_dir(args.source.unwrap(), producer, stat_handler.clone());
     let stats = stat_handler.current();
     println!(
         "Processed {} files ({} bytes) in {} seconds.",
@@ -129,91 +121,53 @@ fn get_new_keys() {
     }
 }
 
-fn transform_or_queue(
-    entry: PathBuf,
-    path_sender: &mut crossbeam::channel::Sender<PathBuf>,
-    queue: &mut Vec<PathBuf>,
-    stats: &StatHandler,
-) {
+fn walk_dir(source: PathBuf, rsa: RsaHandler, stats: StatHandler) {
+    let mut files = Vec::with_capacity(1024);
+    scan(source, &mut files, &stats);
+    files
+        .into_par_iter()
+        .for_each(|file| transform_file(&rsa, file, &stats));
+}
+
+fn transform_file(rsa: &RsaHandler, file: PathBuf, stats: &StatHandler) {
+    let transform_result = rsa.transform(&file);
+    stats.decrement_count();
+    match transform_result {
+        Ok(transformed) => {
+            if let Transformed::Processed(bytes, _) = transformed {
+                let count = stats.current().counter;
+                println!("Remaining: {} Last {:?}", count, file);
+                stats.update(bytes, file);
+            }
+        }
+        Err(e) => {
+            eprintln!("Unable to process file {:?}: {:?}", file, e)
+        }
+    }
+}
+
+fn scan(entry: PathBuf, files: &mut Vec<PathBuf>, stats: &StatHandler) {
     if entry.is_symlink() {
         return;
     }
     if entry.is_file() {
+        files.push(entry);
         stats.increment_count();
-        path_sender.send(entry).expect("unable to send path");
     } else if entry.is_dir() {
-        queue.push(entry);
-    }
-}
-
-fn walk_dir(
-    source: PathBuf,
-    key: PathBuf,
-    target: PathBuf,
-    producer: fn(&Path, &Path) -> RsaHandler,
-    stats: StatHandler,
-) {
-    let (mut path_sender, path_receiver) = crossbeam::channel::bounded(1024);
-    let path_reading_thread =
-        spawn_path_reading(key, target, producer, path_receiver, stats.clone());
-    let mut queue = Vec::with_capacity(1024);
-    transform_or_queue(source, &mut path_sender, &mut queue, &stats);
-    while let Some(path) = queue.pop() {
-        match read_dir(&path) {
+        match read_dir(&entry) {
             Ok(dir) => {
-                for file in dir {
-                    match file {
-                        Ok(f) => transform_or_queue(f.path(), &mut path_sender, &mut queue, &stats),
+                for item in dir {
+                    match item {
+                        Ok(f) => scan(f.path(), files, stats),
                         Err(ref e) => {
-                            eprintln!("Unable to read path: {:?} {:?} {}", path, file, e)
+                            eprintln!("Unable to read path {:?}: {}", entry, e);
                         }
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Unable to scan directory: {:?}: {}", path, e)
+                eprintln!("Unable to scan directory {:?}: {}", entry, e);
             }
         }
     }
-    drop(path_sender);
-    path_reading_thread
-        .join()
-        .expect("unable to join main thread");
-}
-
-fn spawn_path_reading(
-    key: PathBuf,
-    target: PathBuf,
-    producer: fn(&Path, &Path) -> RsaHandler,
-    path_receiver: Receiver<PathBuf>,
-    thread_stats: StatHandler,
-) -> JoinHandle<()> {
-    thread::spawn(move || {
-        let pool = ThreadPoolBuilder::new()
-            .num_threads(12)
-            .build()
-            .expect("cannot create a thread pool");
-
-        pool.scope(|scope| {
-            while let Ok(path) = path_receiver.recv() {
-                scope.spawn(|_| {
-                    let transformer = producer(&key, &target);
-                    let path = Arc::new(Mutex::new(path)); // TODO remove arc
-                    match transformer.transform(path.clone()) {
-                        Ok(transformed) => {
-                            thread_stats.decrement_count();
-                            if let Transformed::Processed(bytes, path) = transformed {
-                                let count = thread_stats.current().counter;
-                                println!("Remaining: {} Last {:?}", count, path);
-                                thread_stats.update(bytes, path);
-                            }
-                        }
-                        Err(e) => {
-                            eprintln!("Unable to process file {:?}: {:?}", path.lock().unwrap(), e)
-                        }
-                    }
-                })
-            }
-        });
-    })
 }

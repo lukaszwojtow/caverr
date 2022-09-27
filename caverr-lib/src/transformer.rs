@@ -3,6 +3,7 @@ use std::error::Error;
 use std::io::{Read, Write};
 use std::{io, thread};
 
+// TODO change to bytes read instead
 /// Reads target in chunks, transforms it using [Transformer::update], and writes to target.
 /// Returns total bytes written or error.
 // TODO change to use buffered IO

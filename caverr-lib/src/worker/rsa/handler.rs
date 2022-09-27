@@ -2,16 +2,15 @@ use crate::file::file_transform;
 use crate::path::build_relative_path;
 use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
 use anyhow::Context;
-use crossbeam::channel::{Receiver, Sender};
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::{io, thread};
 
 #[derive(Clone)]
 pub struct RsaHandler {
-    sender: Sender<Message>,
+    key: RsaKey,
+    target_dir: PathBuf,
 }
 
 impl RsaHandler {
@@ -20,9 +19,7 @@ impl RsaHandler {
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         let key = Self::prepare_public_key(public_key_file)?;
-        let (sender, receiver) = crossbeam::channel::bounded(1024);
-        Self::start_worker(receiver, target_dir, key);
-        Ok(Self { sender })
+        Ok(Self { key, target_dir })
     }
 
     pub fn decryptor(private_key_file: &Path, target_root: &Path) -> anyhow::Result<Self> {
@@ -30,15 +27,20 @@ impl RsaHandler {
             .canonicalize()
             .with_context(|| "Target directory doesn't exist")?;
         let key = Self::prepare_private_key(private_key_file)?;
-        let (sender, receiver) = crossbeam::channel::bounded(1024);
-        Self::start_worker(receiver, target_dir, key);
-        Ok(Self { sender })
+        Ok(Self { key, target_dir })
     }
 
-    pub fn transform(&self, path: Arc<Mutex<PathBuf>>) -> anyhow::Result<Transformed> {
-        let (snd, rcv) = crossbeam::channel::bounded(1);
-        self.sender.send(Message { path, channel: snd })?;
-        rcv.recv()?
+    // TODO fix as_path calls
+    pub fn transform(&self, path: &Path) -> anyhow::Result<Transformed> {
+        let target_path = build_relative_path(path, self.target_dir.as_path())?;
+        if is_newer(path, target_path.as_path()).unwrap_or(true) {
+            // TODO fix clone()
+            let rsa = RsaTransformer::new(self.key.clone());
+            let bytes = file_transform(path, rsa, target_path.as_path(), self.key.message_len())?;
+            Ok(Transformed::Processed(bytes, target_path))
+        } else {
+            Ok(Transformed::Skipped)
+        }
     }
 
     fn prepare_public_key(public_key_file: &Path) -> anyhow::Result<RsaKey> {
@@ -59,66 +61,12 @@ impl RsaHandler {
             })?;
         Ok(RsaKey::PrivateKey(private_key))
     }
-
-    fn start_worker(receiver: Receiver<Message>, target_dir: PathBuf, key: RsaKey) {
-        let worker = RsaWorker::new(target_dir, key, receiver);
-        thread::spawn(|| {
-            start_loop(worker);
-        });
-    }
 }
 
 #[derive(Debug)]
 pub enum Transformed {
     Skipped,
     Processed(usize, PathBuf),
-}
-
-fn start_loop(mut actor: RsaWorker) {
-    while let Ok(msg) = actor.receiver.recv() {
-        actor.handle_message(msg);
-    }
-}
-
-struct RsaWorker {
-    receiver: Receiver<Message>,
-    key: RsaKey,
-    target_dir: PathBuf,
-}
-
-#[derive(Debug)]
-struct Message {
-    path: Arc<Mutex<PathBuf>>,
-    channel: Sender<anyhow::Result<Transformed>>,
-}
-
-impl RsaWorker {
-    fn new(target_dir: PathBuf, key: RsaKey, receiver: Receiver<Message>) -> Self {
-        RsaWorker {
-            key,
-            receiver,
-            target_dir,
-        }
-    }
-
-    fn handle_message(&mut self, msg: Message) {
-        let path = msg.path.lock().unwrap(); //TODO
-        let result = self.work(&path);
-        msg.channel
-            .send(result)
-            .expect("Unable to send result from worker");
-    }
-
-    fn work(&self, source: &Path) -> anyhow::Result<Transformed> {
-        let target_path = build_relative_path(source, &self.target_dir)?;
-        if is_newer(source, &target_path).unwrap_or(true) {
-            let rsa = RsaTransformer::new(self.key.clone());
-            let bytes = file_transform(source, rsa, &target_path, self.key.message_len())?;
-            Ok(Transformed::Processed(bytes, target_path))
-        } else {
-            Ok(Transformed::Skipped)
-        }
-    }
 }
 
 fn is_newer(source: &Path, target: &Path) -> io::Result<bool> {
@@ -138,6 +86,7 @@ mod test {
     use tempfile::TempDir;
     use tokio::fs::write;
 
+    // TODO remove tokio
     #[tokio::test]
     async fn should_check_for_newer() {
         let tmp = TempDir::new().expect("Unable to create TempDir");

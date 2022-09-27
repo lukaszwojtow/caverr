@@ -1,3 +1,4 @@
+pub mod handler;
 pub mod keys;
 pub mod transformer;
 
@@ -7,12 +8,11 @@ pub const DECRYPTION_MESSAGE_SIZE: usize = 512;
 
 #[cfg(test)]
 mod test {
-    use crate::worker::handler::{RsaHandler, Transformed};
+    use crate::worker::rsa::handler::{RsaHandler, Transformed};
     use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
     use std::fs;
     use std::fs::File;
     use std::io::Write;
-    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     const ORIGIN_CONTENT_LEN: usize = 16 * 1024;
@@ -55,10 +55,9 @@ mod test {
         fs::create_dir_all(&target_dir).expect("Unable to create target_dir");
         let encryptor = RsaHandler::encryptor(&public_key_path, &target_dir)
             .expect("Unable to create encryptor");
-        let arc_original_file_path = Arc::new(Mutex::new(original_file_path.clone()));
         println!("Created encryptor after {:?}", start.elapsed());
         let result = encryptor
-            .transform(arc_original_file_path)
+            .transform(&original_file_path)
             .expect("unable to transform");
         let encrypted = if let Transformed::Processed(bytes, path) = result {
             (bytes, path)
@@ -75,7 +74,7 @@ mod test {
             .expect("Unable to create decryptor");
         println!("Created decryptor after {:?}", start.elapsed());
         let result = decryptor
-            .transform(Arc::new(Mutex::new(encrypted.1)))
+            .transform(&encrypted.1)
             .expect("unable to transform");
         let decrypted = if let Transformed::Processed(bytes, path) = result {
             (bytes, path)
