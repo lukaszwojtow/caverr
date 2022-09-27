@@ -30,11 +30,11 @@ pub fn file_transform(
         let mut chunks = pending_chunks.inner.lock().unwrap();
         if chunks.next == chunk.id {
             let mut t = buffered_target.lock().unwrap();
-            t.write_all(&transformed).unwrap();
+            t.write_all(&transformed).unwrap(); // TODO handle
             chunks.next += 1;
             let mut next = chunks.next;
             while let Some(found) = chunks.find(next) {
-                t.write_all(&found.data).unwrap();
+                t.write_all(&found.data).unwrap(); // TODO handle
                 chunks.next += 1;
                 next = chunks.next;
             }
@@ -103,7 +103,7 @@ impl Iterator for ParallelFile {
                     Some(Chunk { data: buffer, id })
                 }
             }
-            Err(_) => None,
+            Err(_) => None, // TODO return error
         }
     }
 }
