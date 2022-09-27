@@ -78,6 +78,7 @@ dependencies = [
  "anyhow",
  "crossbeam",
  "rand",
+ "rayon",
  "rsa",
  "rusty-hook",
  "sha1",

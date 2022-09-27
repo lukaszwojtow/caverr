@@ -6,6 +6,9 @@ pub const KEY_BITS: usize = 4096;
 pub const ENCRYPTION_MESSAGE_SIZE: usize = 256;
 pub const DECRYPTION_MESSAGE_SIZE: usize = 512;
 
+// Baseline: encryption: 0.25, decryption: 3.86
+// Parallel: encryption: 0.03, decryption: 0.39
+
 #[cfg(test)]
 mod test {
     use crate::worker::rsa::handler::{RsaHandler, Transformed};
@@ -15,7 +18,7 @@ mod test {
     use std::io::Write;
     use std::time::Instant;
 
-    const ORIGIN_CONTENT_LEN: usize = 16 * 1024;
+    const ORIGIN_CONTENT_LEN: usize = 64 * 1024;
 
     #[tokio::test]
     async fn should_generate_keys_to_encrypt_and_decrypt() {

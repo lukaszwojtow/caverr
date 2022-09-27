@@ -66,7 +66,7 @@ impl RsaHandler {
 #[derive(Debug)]
 pub enum Transformed {
     Skipped,
-    Processed(usize, PathBuf),
+    Processed(u64, PathBuf),
 }
 
 fn is_newer(source: &Path, target: &Path) -> io::Result<bool> {

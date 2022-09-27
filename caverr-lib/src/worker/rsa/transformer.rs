@@ -1,4 +1,3 @@
-use crate::transformer::Transformer;
 use crate::worker::rsa::{DECRYPTION_MESSAGE_SIZE, ENCRYPTION_MESSAGE_SIZE};
 use rand::thread_rng;
 use rsa::{PaddingScheme, PublicKey, RsaPrivateKey, RsaPublicKey};
@@ -31,10 +30,8 @@ impl RsaTransformer {
     }
 }
 
-impl Transformer for RsaTransformer {
-    type Error = rsa::errors::Error;
-
-    fn update(&mut self, bytes: Vec<u8>) -> Result<Vec<u8>, Self::Error> {
+impl RsaTransformer {
+    pub(crate) fn update(&self, bytes: Vec<u8>) -> Result<Vec<u8>, rsa::errors::Error> {
         let mut rng = thread_rng();
         match &self.key {
             RsaKey::PublicKey(key) => Ok(key.encrypt(&mut rng, padding(), &bytes)?),

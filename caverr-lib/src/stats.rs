@@ -31,7 +31,7 @@ impl StatHandler {
             .expect("Unable to send DecrementCount");
     }
 
-    pub fn update(&self, bytes: usize, path: PathBuf) {
+    pub fn update(&self, bytes: u64, path: PathBuf) {
         self.sender
             .send(StatMessage::Update(bytes, path))
             .expect("Unable to send stats update");
@@ -49,7 +49,7 @@ impl StatHandler {
 
 #[derive(Debug, Clone)]
 pub struct CurrentStats {
-    pub bytes: usize, // TODO visibility
+    pub bytes: u64, // TODO visibility
     pub bytes_per_second: f32,
     pub files: usize,
     pub counter: usize,
@@ -70,7 +70,7 @@ struct StatWorker {
 
 #[derive(Debug)]
 enum StatMessage {
-    Update(usize, PathBuf),
+    Update(u64, PathBuf),
     Request(Sender<CurrentStats>),
     IncrementCount,
     DecrementCount,
