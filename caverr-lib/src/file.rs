@@ -3,12 +3,12 @@ use anyhow::Context;
 use rand::{thread_rng, RngCore};
 use rayon::iter::ParallelBridge;
 use rayon::prelude::ParallelIterator;
-use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Write};
 use std::io::{BufWriter, Read};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
+use std::{fs, io};
 
 pub fn file_transform(
     source_path: &Path,
@@ -25,16 +25,46 @@ pub fn file_transform(
         .with_context(|| format!("Unable to write to target file: {:?}", tmp_path))?;
     let buffered_target = Arc::new(Mutex::new(BufWriter::new(tmp_target)));
     let pending_chunks = PendingChunks::new();
+    let error: Arc<RwLock<Option<anyhow::Error>>> = Arc::new(RwLock::new(None));
     source.into_iter().par_bridge().for_each(|chunk| {
-        let transformed = rsa.work(chunk.data).unwrap();
+        let error_lock = error.read().unwrap();
+        if error_lock.is_some() {
+            return;
+        } else {
+            drop(error_lock);
+        };
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(e) => {
+                let mut error_lock = error.write().unwrap();
+                *error_lock = Some(e.into());
+                return;
+            }
+        };
+        let transformed = match rsa.work(chunk.data) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let mut error_lock = error.write().unwrap();
+                *error_lock = Some(e.into());
+                return;
+            }
+        };
         let mut chunks = pending_chunks.inner.lock().unwrap();
         if chunks.next == chunk.id {
             let mut t = buffered_target.lock().unwrap();
-            t.write_all(&transformed).unwrap(); // TODO handle
+            if let Err(e) = t.write_all(&transformed) {
+                let mut error_lock = error.write().unwrap();
+                *error_lock = Some(e.into());
+                return;
+            }
             chunks.next += 1;
             let mut next = chunks.next;
             while let Some(found) = chunks.find(next) {
-                t.write_all(&found.data).unwrap(); // TODO handle
+                if let Err(e) = t.write_all(&found.data) {
+                    let mut error_lock = error.write().unwrap();
+                    *error_lock = Some(e.into());
+                    return;
+                }
                 chunks.next += 1;
                 next = chunks.next;
             }
@@ -52,7 +82,12 @@ pub fn file_transform(
     drop(tmp_target);
     fs::rename(tmp_path, target_path)
         .with_context(|| format!("Unable to rename file to:  {:?}", target_path))?;
-    Ok(bytes)
+    let error = Arc::try_unwrap(error).unwrap().into_inner().unwrap();
+    if let Some(error) = error {
+        Err(error)
+    } else {
+        Ok(bytes)
+    }
 }
 
 struct ParallelFile {
@@ -63,6 +98,7 @@ struct InnerParallelFile {
     file: BufReader<File>,
     chunk_size: usize,
     next_id: usize,
+    was_error: bool,
 }
 
 impl ParallelFile {
@@ -72,6 +108,7 @@ impl ParallelFile {
                 file: BufReader::with_capacity(65536, file),
                 chunk_size,
                 next_id: 0,
+                was_error: false,
             })),
         }
     }
@@ -83,10 +120,13 @@ struct Chunk {
 }
 
 impl Iterator for ParallelFile {
-    type Item = Chunk;
+    type Item = io::Result<Chunk>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut inner = self.inner.lock().unwrap();
+        if inner.was_error {
+            return None;
+        }
         let size = inner.chunk_size;
         let mut buffer = vec![0u8; size];
         let result = inner.file.read(&mut buffer[..]);
@@ -100,10 +140,14 @@ impl Iterator for ParallelFile {
                     None
                 } else {
                     buffer.truncate(len);
-                    Some(Chunk { data: buffer, id })
+                    Some(Ok(Chunk { data: buffer, id }))
                 }
             }
-            Err(_) => None, // TODO return error
+            Err(e) => {
+                let mut inner = self.inner.lock().unwrap();
+                inner.was_error = true;
+                Some(Err(e))
+            }
         }
     }
 }
