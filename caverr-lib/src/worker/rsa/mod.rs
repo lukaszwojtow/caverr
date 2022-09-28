@@ -1,18 +1,17 @@
 pub mod handler;
+pub mod holder;
 pub mod keys;
-pub mod transformer;
 
 pub const KEY_BITS: usize = 4096;
 pub const ENCRYPTION_MESSAGE_SIZE: usize = 256;
 pub const DECRYPTION_MESSAGE_SIZE: usize = 512;
 
-// Baseline: encryption: 0.25, decryption: 3.86
-// Parallel: encryption: 0.03, decryption: 0.39
-
 #[cfg(test)]
 mod test {
     use crate::worker::rsa::handler::{RsaHandler, Transformed};
     use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
+    use rand::thread_rng;
+    use rand::RngCore;
     use std::fs;
     use std::fs::File;
     use std::io::Write;
@@ -97,9 +96,10 @@ mod test {
     }
 
     fn content() -> Vec<u8> {
+        let mut rng = thread_rng();
         let mut bytes = Vec::with_capacity(ORIGIN_CONTENT_LEN);
-        for i in 0..ORIGIN_CONTENT_LEN {
-            bytes.push((i % 256) as u8);
+        for _ in 0..ORIGIN_CONTENT_LEN {
+            bytes.push((rng.next_u32() % 256) as u8);
         }
         bytes
     }

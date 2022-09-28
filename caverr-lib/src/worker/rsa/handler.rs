@@ -1,6 +1,6 @@
 use crate::file::file_transform;
 use crate::path::build_relative_path;
-use crate::worker::rsa::transformer::{RsaKey, RsaTransformer};
+use crate::worker::rsa::holder::{RsaHolder, RsaKey};
 use anyhow::Context;
 use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
 use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -35,7 +35,7 @@ impl RsaHandler {
         let target_path = build_relative_path(path, self.target_dir.as_path())?;
         if is_newer(path, target_path.as_path()).unwrap_or(true) {
             // TODO fix clone()
-            let rsa = RsaTransformer::new(self.key.clone());
+            let rsa = RsaHolder::new(self.key.clone());
             let bytes = file_transform(path, rsa, target_path.as_path(), self.key.message_len())?;
             Ok(Transformed::Processed(bytes, target_path))
         } else {

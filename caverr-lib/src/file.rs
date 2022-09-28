@@ -1,4 +1,4 @@
-use crate::worker::rsa::transformer::RsaTransformer;
+use crate::worker::rsa::holder::RsaHolder;
 use anyhow::Context;
 use rand::{thread_rng, RngCore};
 use rayon::iter::ParallelBridge;
@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 
 pub fn file_transform(
     source_path: &Path,
-    transformer: RsaTransformer,
+    rsa: RsaHolder,
     target_path: &Path,
     message_len: usize,
 ) -> anyhow::Result<u64> {
@@ -26,7 +26,7 @@ pub fn file_transform(
     let buffered_target = Arc::new(Mutex::new(BufWriter::new(tmp_target)));
     let pending_chunks = PendingChunks::new();
     source.into_iter().par_bridge().for_each(|chunk| {
-        let transformed = transformer.update(chunk.data).unwrap();
+        let transformed = rsa.work(chunk.data).unwrap();
         let mut chunks = pending_chunks.inner.lock().unwrap();
         if chunks.next == chunk.id {
             let mut t = buffered_target.lock().unwrap();
@@ -136,7 +136,7 @@ impl PendingChunks {
     fn new() -> Self {
         Self {
             inner: Arc::new(Mutex::new(InnerPendingChunks {
-                chunks: vec![],
+                chunks: Vec::with_capacity(32),
                 next: 0,
             })),
         }

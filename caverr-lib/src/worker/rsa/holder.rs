@@ -20,18 +20,18 @@ impl RsaKey {
     }
 }
 
-pub struct RsaTransformer {
+pub struct RsaHolder {
     key: RsaKey,
 }
 
-impl RsaTransformer {
+impl RsaHolder {
     pub fn new(key: RsaKey) -> Self {
         Self { key }
     }
 }
 
-impl RsaTransformer {
-    pub(crate) fn update(&self, bytes: Vec<u8>) -> Result<Vec<u8>, rsa::errors::Error> {
+impl RsaHolder {
+    pub(crate) fn work(&self, bytes: Vec<u8>) -> Result<Vec<u8>, rsa::errors::Error> {
         let mut rng = thread_rng();
         match &self.key {
             RsaKey::PublicKey(key) => Ok(key.encrypt(&mut rng, padding(), &bytes)?),
