@@ -18,17 +18,17 @@ mod test {
     use std::io::Write;
     use std::time::Instant;
 
-    #[tokio::test]
-    async fn should_encrypt_long_file() {
-        test_file(2 * MULTITHREADED_MESSAGE_SIZE).await;
+    #[test]
+    fn should_encrypt_long_file() {
+        test_file(2 * MULTITHREADED_MESSAGE_SIZE);
     }
 
-    #[tokio::test]
-    async fn should_encrypt_short_file() {
-        test_file(MULTITHREADED_MESSAGE_SIZE / 2).await;
+    #[test]
+    fn should_encrypt_short_file() {
+        test_file(MULTITHREADED_MESSAGE_SIZE / 2);
     }
 
-    async fn test_file(len: u64) {
+    fn test_file(len: u64) {
         const ORIGINAL_FILE_NAME: &str = "original.txt";
 
         let start = Instant::now();

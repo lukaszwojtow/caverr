@@ -82,24 +82,20 @@ fn is_newer(source: &Path, target: &Path) -> io::Result<bool> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::fs::write;
+    use std::thread::sleep;
     use std::time::Duration;
     use tempfile::TempDir;
-    use tokio::fs::write;
 
-    // TODO remove tokio
-    #[tokio::test]
-    async fn should_check_for_newer() {
+    #[test]
+    fn should_check_for_newer() {
         let tmp = TempDir::new().expect("Unable to create TempDir");
         let first_path = tmp.path().join("first");
-        write(&first_path, vec![1; 1024])
-            .await
-            .expect("Unable to write");
+        write(&first_path, vec![1; 1024]).expect("Unable to write");
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        sleep(Duration::from_secs(2));
         let second_path = tmp.path().join("second");
-        write(&second_path, vec![1; 1024])
-            .await
-            .expect("Unable to write");
+        write(&second_path, vec![1; 1024]).expect("Unable to write");
         let check = is_newer(&first_path, &second_path);
         assert!(check.is_ok());
         assert!(!check.unwrap());
