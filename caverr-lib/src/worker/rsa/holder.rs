@@ -20,17 +20,17 @@ impl RsaKey {
     }
 }
 
-pub struct RsaHolder {
-    key: RsaKey,
+pub struct RsaHolder<'a> {
+    key: &'a RsaKey,
 }
 
-impl RsaHolder {
-    pub fn new(key: RsaKey) -> Self {
+impl<'a> RsaHolder<'a> {
+    pub fn new(key: &'a RsaKey) -> Self {
         Self { key }
     }
 }
 
-impl RsaHolder {
+impl RsaHolder<'_> {
     pub(crate) fn work(&self, bytes: Vec<u8>) -> Result<Vec<u8>, rsa::errors::Error> {
         let mut rng = thread_rng();
         match &self.key {
