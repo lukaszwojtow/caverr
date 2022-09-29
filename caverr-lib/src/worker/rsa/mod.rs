@@ -8,6 +8,7 @@ pub const DECRYPTION_MESSAGE_SIZE: usize = 512;
 
 #[cfg(test)]
 mod test {
+    use crate::file::MULTITHREADED_MESSAGE_SIZE;
     use crate::worker::rsa::handler::{RsaHandler, Transformed};
     use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
     use rand::thread_rng;
@@ -17,10 +18,17 @@ mod test {
     use std::io::Write;
     use std::time::Instant;
 
-    const ORIGIN_CONTENT_LEN: usize = 64 * 1024;
+    #[tokio::test]
+    async fn should_encrypt_long_file() {
+        test_file(2 * MULTITHREADED_MESSAGE_SIZE).await;
+    }
 
     #[tokio::test]
-    async fn should_generate_keys_to_encrypt_and_decrypt() {
+    async fn should_encrypt_short_file() {
+        test_file(MULTITHREADED_MESSAGE_SIZE / 2).await;
+    }
+
+    async fn test_file(len: u64) {
         const ORIGINAL_FILE_NAME: &str = "original.txt";
 
         let start = Instant::now();
@@ -47,7 +55,7 @@ mod test {
         let mut original_file =
             File::create(&original_file_path).expect("Unable to create original content file");
         original_file
-            .write_all(&content())
+            .write_all(&content(len))
             .expect("Unable to write to original file");
         original_file.flush().expect("Unable to flash file");
         println!("Created files after {:?}", start.elapsed());
@@ -91,14 +99,14 @@ mod test {
         let origin_content = fs::read(&original_file_path).expect("Unable to read origin file");
         let decrypted_content = fs::read(&decrypted_path).expect("Unable to read decrypted file");
         assert_eq!(origin_content, decrypted_content);
-        assert_eq!(origin_content.len(), ORIGIN_CONTENT_LEN);
+        assert_eq!(origin_content.len(), len as usize);
         println!("Compared after {:?}", start.elapsed());
     }
 
-    fn content() -> Vec<u8> {
+    fn content(len: u64) -> Vec<u8> {
         let mut rng = thread_rng();
-        let mut bytes = Vec::with_capacity(ORIGIN_CONTENT_LEN);
-        for _ in 0..ORIGIN_CONTENT_LEN {
+        let mut bytes = Vec::with_capacity(len as usize);
+        for _ in 0..len {
             bytes.push((rng.next_u32() % 256) as u8);
         }
         bytes

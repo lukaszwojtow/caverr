@@ -1,29 +1,20 @@
 use crate::worker::rsa::holder::RsaHolder;
-use anyhow::Context;
-use rand::{thread_rng, RngCore};
 use rayon::iter::ParallelBridge;
-use rayon::prelude::ParallelIterator;
+use rayon::iter::ParallelIterator;
 use std::fs::File;
-use std::io::{BufReader, Write};
-use std::io::{BufWriter, Read};
-use std::path::Path;
+use std::io;
+use std::io::Write;
+use std::io::{BufReader, BufWriter, Read};
 use std::sync::{Arc, Mutex, RwLock};
-use std::{fs, io};
 
-pub fn file_transform(
-    source_path: &Path,
+pub(super) fn file_transform(
+    source: BufReader<File>,
     rsa: RsaHolder,
-    target_path: &Path,
     message_len: usize,
-) -> anyhow::Result<u64> {
-    let source = File::open(&source_path)
-        .with_context(|| format!("Unable to read the source file: {:?}", source_path))?;
-    let bytes = source.metadata()?.len();
+    target: &mut BufWriter<File>,
+) -> anyhow::Result<()> {
     let source = ParallelFile::new(source, message_len);
-    let tmp_path = target_path.with_file_name(format!("{}.tmp", thread_rng().next_u64()));
-    let tmp_target = File::create(&tmp_path)
-        .with_context(|| format!("Unable to write to target file: {:?}", tmp_path))?;
-    let buffered_target = Arc::new(Mutex::new(BufWriter::new(tmp_target)));
+    let buffered_target = Arc::new(Mutex::new(target));
     let pending_chunks = PendingChunks::new();
     let error: Arc<RwLock<Option<anyhow::Error>>> = Arc::new(RwLock::new(None));
     source.into_iter().par_bridge().for_each(|chunk| {
@@ -75,18 +66,11 @@ pub fn file_transform(
             });
         }
     });
-    let mut tmp_target = buffered_target.lock().unwrap();
-    tmp_target
-        .flush()
-        .with_context(|| format!("Unable to flush file: {:?}", tmp_path))?;
-    drop(tmp_target);
-    fs::rename(tmp_path, target_path)
-        .with_context(|| format!("Unable to rename file to:  {:?}", target_path))?;
     let error = Arc::try_unwrap(error).unwrap().into_inner().unwrap();
     if let Some(error) = error {
         Err(error)
     } else {
-        Ok(bytes)
+        Ok(())
     }
 }
 
@@ -102,10 +86,10 @@ struct InnerParallelFile {
 }
 
 impl ParallelFile {
-    fn new(file: File, chunk_size: usize) -> Self {
+    fn new(file: BufReader<File>, chunk_size: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(InnerParallelFile {
-                file: BufReader::with_capacity(65536, file),
+                file,
                 chunk_size,
                 next_id: 0,
                 was_error: false,
