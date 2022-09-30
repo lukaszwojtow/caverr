@@ -30,12 +30,11 @@ impl RsaHandler {
         Ok(Self { key, target_dir })
     }
 
-    // TODO fix as_path calls
     pub fn transform(&self, path: &Path) -> anyhow::Result<Transformed> {
-        let target_path = build_relative_path(path, self.target_dir.as_path())?;
-        if is_newer(path, target_path.as_path()).unwrap_or(true) {
+        let target_path = build_relative_path(path, &self.target_dir)?;
+        if is_newer(path, &target_path).unwrap_or(true) {
             let rsa = RsaHolder::new(&self.key);
-            let bytes = file_transform(path, rsa, target_path.as_path(), self.key.message_len())?;
+            let bytes = file_transform(path, rsa, &target_path, self.key.message_len())?;
             Ok(Transformed::Processed(bytes, target_path))
         } else {
             Ok(Transformed::Skipped)
