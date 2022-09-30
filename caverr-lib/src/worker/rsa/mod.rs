@@ -8,7 +8,6 @@ pub const DECRYPTION_MESSAGE_SIZE: usize = 512;
 
 #[cfg(test)]
 mod test {
-    use crate::file::MULTITHREADED_MESSAGE_SIZE;
     use crate::worker::rsa::handler::{RsaHandler, Transformed};
     use crate::worker::rsa::keys::{generate_keys, write_private_key, write_public_key};
     use rand::thread_rng;
@@ -19,13 +18,8 @@ mod test {
     use std::time::Instant;
 
     #[test]
-    fn should_encrypt_long_file() {
-        test_file(2 * MULTITHREADED_MESSAGE_SIZE);
-    }
-
-    #[test]
-    fn should_encrypt_short_file() {
-        test_file(MULTITHREADED_MESSAGE_SIZE / 2);
+    fn should_encrypt_file() {
+        test_file(16 * 1024);
     }
 
     fn test_file(len: u64) {

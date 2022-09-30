@@ -1,5 +1,4 @@
 mod multi_thread;
-mod single_thread;
 
 use crate::worker::rsa::holder::RsaHolder;
 use anyhow::Context;
@@ -9,8 +8,6 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::io::{BufReader, Write};
 use std::path::Path;
-
-pub(crate) const MULTITHREADED_MESSAGE_SIZE: u64 = 1024 * 1024;
 
 pub fn file_transform(
     source_path: &Path,
@@ -28,12 +25,7 @@ pub fn file_transform(
         File::create(&tmp_path)
             .with_context(|| format!("Unable to write to target file: {:?}", tmp_path))?,
     );
-    if bytes < MULTITHREADED_MESSAGE_SIZE {
-        single_thread::file_transform(source, rsa, message_len, &mut tmp_target)?;
-    } else {
-        multi_thread::file_transform(source, rsa, message_len, &mut tmp_target)?;
-    }
-
+    multi_thread::file_transform(source, rsa, message_len, &mut tmp_target)?;
     tmp_target
         .flush()
         .with_context(|| format!("Unable to flush file: {:?}", tmp_path))?;
